@@ -5,3 +5,4 @@
 /RoofingLeadGeneration/bin/Debug/net8.0
 /RoofingLeadGeneration/.vs/RoofingLeadGeneration
 /RoofingLeadGeneration/obj
+*.user
