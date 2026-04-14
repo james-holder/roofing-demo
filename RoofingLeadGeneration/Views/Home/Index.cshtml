@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Roofing Lead Generation Tool</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1, h2 { color: #333; }
+        .container { max-width: 800px; margin: auto; }
+        .tool { margin: 20px 0; }
+        input { padding: 10px; width: 80%; }
+        button { padding: 10px 15px; }
+        #roofHealthResult { margin-top: 20px; }
+    </style>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB2YmUC-KAbjTUSO4p9NNIaG_3af4iTevM&libraries=places"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Welcome to Roofing Lead Generation Tool</h1>
+        
+        <div class="tool">
+            <h2>Roof Health Check</h2>
+            <input type="text" id="address" placeholder="Enter your full address" onFocus="initAutocomplete()" />
+            <button onclick="checkRoofHealth()">Check Roof Health</button>
+            <div id="roofHealthResult"></div>
+        </div>
+        
+        <script>
+            function initAutocomplete() {
+                const input = document.getElementById('address');
+                const autocomplete = new google.maps.places.Autocomplete(input);
+            }
+
+            async function checkRoofHealth() {
+                const address = document.getElementById('address').value;
+                try {
+                    const response = await fetch(`/RoofHealth/Check?address=${encodeURIComponent(address)}`);
+                    const data = await response.text();
+                    document.getElementById('roofHealthResult').innerText = data;
+                } catch (error) {
+                    document.getElementById('roofHealthResult').innerText = "Error fetching data.";
+                }
+            }
+        </script>
+    </div>
+</body>
+</html>
