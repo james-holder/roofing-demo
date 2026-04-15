@@ -1,0 +1,21 @@
+# Build output
+bin/
+obj/
+
+# User-specific VS files
+.vs/
+*.user
+*.suo
+
+# ASP.NET Core secrets & local config
+appsettings.Development.json
+**/secrets.json
+
+# SQLite database — contains real lead & user data, never commit
+**/data/*.db
+**/data/*.db-shm
+**/data/*.db-wal
+
+# OS
+.DS_Store
+Thumbs.db
