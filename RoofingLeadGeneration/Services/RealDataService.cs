@@ -239,20 +239,19 @@ out center;";
             var token = _config["Regrid:Token"];
             if (string.IsNullOrWhiteSpace(token)) return null;
 
-            // GET /api/v1/parcel?lat={lat}&lon={lng}&token={token}&limit=1&radius=50
+            // GET /api/v1/parcel?lat={lat}&lon={lng}&token={token}&limit=1&radius=200
             var url = $"https://app.regrid.com/api/v1/parcel" +
-                      $"?lat={lat}&lon={lng}&token={token}&limit=1&radius=50";
+                      $"?lat={lat}&lon={lng}&token={token}&limit=1&radius=200";
             try
             {
                 using var client = _httpFactory.CreateClient("regrid");
                 var resp = await client.GetAsync(url);
-                if (!resp.IsSuccessStatusCode)
-                {
-                    _logger.LogWarning("Regrid returned {Status}", resp.StatusCode);
-                    return null;
-                }
-
                 var json = await resp.Content.ReadAsStringAsync();
+
+                _logger.LogInformation("Regrid {Status} for {Lat},{Lng} — body: {Body}",
+                    resp.StatusCode, lat, lng, json.Length > 500 ? json[..500] : json);
+
+                if (!resp.IsSuccessStatusCode) return null;
                 return ParseRegridOwner(json);
             }
             catch (Exception ex)
@@ -266,24 +265,39 @@ out center;";
         {
             using var doc = JsonDocument.Parse(json);
 
-            // Structure: { "parcels": { "features": [ { "properties": { "fields": { ... } } } ] } }
-            if (!doc.RootElement.TryGetProperty("parcels",  out var parcels))  return null;
-            if (!parcels.TryGetProperty("features",          out var features)) return null;
-            if (features.GetArrayLength() == 0)                                 return null;
+            // Try top-level "parcels" wrapper (v1 API)
+            var root = doc.RootElement;
+            JsonElement features;
+
+            if (root.TryGetProperty("parcels", out var parcels) &&
+                parcels.TryGetProperty("features", out features))
+            { /* found */ }
+            else if (root.TryGetProperty("features", out features))
+            { /* root is a FeatureCollection */ }
+            else return null;
+
+            if (features.GetArrayLength() == 0) return null;
 
             var first = features[0];
             if (!first.TryGetProperty("properties", out var props)) return null;
-            if (!props.TryGetProperty("fields",      out var fields)) return null;
 
-            // Regrid uses different field names depending on county data source
-            foreach (var name in new[] { "owner", "owner1", "owner_name", "ownerName", "OWNER_NAME" })
+            // Fields may be nested under "fields" or directly on properties
+            var searchIn = props.TryGetProperty("fields", out var fields)
+                ? new[] { fields, props }
+                : new[] { props };
+
+            foreach (var obj in searchIn)
             {
-                if (fields.TryGetProperty(name, out var v))
+                foreach (var name in new[] { "owner", "owner1", "owner_name", "ownerName",
+                                             "OWNER_NAME", "ownername", "Owner" })
                 {
-                    var raw = v.GetString();
-                    if (!string.IsNullOrWhiteSpace(raw))
-                        return System.Globalization.CultureInfo.CurrentCulture
-                                     .TextInfo.ToTitleCase(raw.ToLower().Trim());
+                    if (obj.TryGetProperty(name, out var v))
+                    {
+                        var raw = v.GetString();
+                        if (!string.IsNullOrWhiteSpace(raw))
+                            return System.Globalization.CultureInfo.CurrentCulture
+                                         .TextInfo.ToTitleCase(raw.ToLower().Trim());
+                    }
                 }
             }
             return null;
