@@ -239,8 +239,8 @@ out center;";
             var token = _config["Regrid:Token"];
             if (string.IsNullOrWhiteSpace(token)) return null;
 
-            // GET /api/v1/parcel?lat={lat}&lon={lng}&token={token}&limit=1&radius=200
-            var url = $"https://app.regrid.com/api/v1/parcel" +
+            // GET /api/v1/parcel.json?lat={lat}&lon={lng}&token={token}&limit=1&radius=200
+            var url = $"https://app.regrid.com/api/v1/parcel.json" +
                       $"?lat={lat}&lon={lng}&token={token}&limit=1&radius=200";
             try
             {
