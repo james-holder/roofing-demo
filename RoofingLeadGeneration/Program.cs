@@ -84,7 +84,10 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
+// Fly.io terminates HTTPS at the edge — don't redirect inside the container
+if (app.Environment.IsDevelopment())
+    app.UseHttpsRedirection();
+
 app.UseStaticFiles();
 app.UseRouting();
 
