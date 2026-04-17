@@ -45,10 +45,15 @@
         .badge-medium { background: rgba(249,115,22,0.15); color: #fdba74; border: 1px solid rgba(249,115,22,0.4); }
         .badge-low    { background: rgba(34,197,94,0.15);  color: #86efac; border: 1px solid rgba(34,197,94,0.4); }
 
-        /* ── Tabs ── */
+        /* ── Old underline tabs (Data Sources panel) ── */
         .tab-btn { transition: color 0.15s, border-color 0.15s; }
-        .tab-btn.active { color: #f97316; border-bottom-color: #f97316; }
-        .tab-btn:not(.active) { color: #64748b; border-bottom-color: transparent; }
+        .tab-btn.active, .tab-btn.tab-active { color: #f97316; border-bottom-color: #f97316; }
+        .tab-btn:not(.active):not(.tab-active) { color: #64748b; border-bottom-color: transparent; }
+
+        /* ── Pill tabs (Needs Enrichment / Enriched) ── */
+        .lead-tab { color: #64748b; }
+        .lead-tab:hover:not(.lead-tab-active) { color: #cbd5e1; background: #334155; }
+        .lead-tab-active { background: #f97316; color: #fff !important; box-shadow: 0 2px 8px rgba(249,115,22,0.35); }
 
         /* ── Source cards ── */
         .source-card { transition: border-color 0.2s, box-shadow 0.2s; }

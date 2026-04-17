@@ -143,17 +143,45 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     TABS
+     LEAD TABS  (Needs Enrichment / Enriched)
 ══════════════════════════════════════════════════════════════ -->
-<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-    <div class="flex gap-0 border-b border-slate-700/60">
-        <button id="tabBtnLeads" onclick="switchTab('leads')"
-            class="tab-btn active px-5 py-3.5 text-sm font-semibold border-b-2 -mb-px">
-            <i class="fa-solid fa-table-list mr-1.5"></i>My Leads
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-5 pb-1">
+    <div class="inline-flex rounded-xl bg-slate-800 border border-slate-700 p-1 gap-1">
+        <button id="tabUnenriched" onclick="switchLeadTab('unenriched')"
+            class="lead-tab lead-tab-active flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all">
+            <i class="fa-solid fa-bolt text-orange-400"></i>
+            Needs Enrichment
+            <span id="tabUnenrichedCount" class="px-2 py-0.5 rounded-full bg-slate-700/80 text-xs font-bold text-slate-300"></span>
         </button>
-        <button id="tabBtnSources" onclick="switchTab('sources')"
-            class="tab-btn px-5 py-3.5 text-sm font-semibold border-b-2 -mb-px">
-            <i class="fa-solid fa-database mr-1.5"></i>Data Sources
+        <button id="tabEnriched" onclick="switchLeadTab('enriched')"
+            class="lead-tab flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all">
+            <i class="fa-solid fa-circle-check text-green-400"></i>
+            Enriched
+            <span id="tabEnrichedCount" class="px-2 py-0.5 rounded-full bg-slate-700/80 text-xs font-bold text-slate-300"></span>
+        </button>
+        <button id="tabArchived" onclick="switchLeadTab('archived')"
+            class="lead-tab flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all">
+            <i class="fa-solid fa-box-archive text-slate-400"></i>
+            Archived
+            <span id="tabArchivedCount" class="px-2 py-0.5 rounded-full bg-slate-700/80 text-xs font-bold text-slate-300"></span>
+        </button>
+    </div>
+</div>
+
+<!-- Bulk action toolbar (appears when rows selected) -->
+<div id="bulkToolbar" class="hidden max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2">
+    <div class="flex items-center gap-3 bg-slate-800 border border-slate-600 rounded-xl px-4 py-2.5 shadow-lg">
+        <span class="text-slate-300 text-sm font-semibold">
+            <span id="selectedCount">0</span> selected
+        </span>
+        <div class="flex-1"></div>
+        <button id="btnBulkEnrich" onclick="bulkEnrich()"
+            class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold transition">
+            <i class="fa-solid fa-bolt"></i>Enrich Selected
+        </button>
+        <button id="btnBulkArchive" onclick="bulkArchive()"
+            class="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-slate-600 hover:bg-slate-500 text-slate-200 text-xs font-semibold transition">
+            <i class="fa-solid fa-box-archive"></i>Archive Selected
         </button>
     </div>
 </div>
@@ -205,6 +233,9 @@
             <table id="leadsTable" class="w-full border-collapse">
                 <thead>
                     <tr>
+                        <th id="thCheckbox" class="w-8 text-center" style="cursor:default">
+                            <input type="checkbox" id="selectAll" class="accent-orange-500 w-4 h-4 cursor-pointer" onchange="toggleSelectAll(this)" title="Select all" />
+                        </th>
                         <th onclick="sortBy('address')"          class="text-left"   style="min-width:160px"><span class="sort-icon">Address</span></th>
                         <th onclick="sortBy('riskLevel')"        class="text-left"   style="min-width:75px"><span class="sort-icon">Risk</span></th>
                         <th onclick="sortBy('ownerName')"        class="text-left hidden sm:table-cell" style="min-width:120px"><span class="sort-icon">Owner</span></th>

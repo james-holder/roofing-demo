@@ -121,6 +121,8 @@ using (var scope = app.Services.CreateScope())
     AddColumnIfMissing("leads", "property_type", "TEXT");
     AddColumnIfMissing("leads", "source_address","TEXT");
     AddColumnIfMissing("leads", "notes",         "TEXT");
+    AddColumnIfMissing("leads", "is_enriched",   "INTEGER NOT NULL DEFAULT 0");
+    AddColumnIfMissing("leads", "deleted_at",    "TEXT");
 
     if (!TableExists("enrichments"))
     {

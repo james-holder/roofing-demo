@@ -22,14 +22,28 @@ namespace RoofingLeadGeneration.Controllers
         [HttpGet("Saved")]
         public IActionResult Saved() => View();
 
-        // ── GET /Leads → JSON list ───────────────────────────────────
+        // ── GET /Leads?tab=unenriched|enriched|archived ──────────────
         [HttpGet]
-        public async Task<IActionResult> Index()
+        public async Task<IActionResult> Index(string tab = "unenriched")
         {
             var userId = CurrentUserId;
 
-            var leads = await _db.Leads
-                .Where(l => l.UserId == userId || l.UserId == null)
+            IQueryable<Lead> query;
+            if (tab == "archived")
+            {
+                query = _db.Leads
+                    .Where(l => (l.UserId == userId || l.UserId == null) && l.DeletedAt != null);
+            }
+            else
+            {
+                query = _db.Leads
+                    .Where(l => (l.UserId == userId || l.UserId == null) && l.DeletedAt == null);
+                query = tab == "enriched"
+                    ? query.Where(l => l.IsEnriched)
+                    : query.Where(l => !l.IsEnriched);
+            }
+
+            var leads = await query
                 .OrderBy(l => l.RiskLevel == "High" ? 0 : l.RiskLevel == "Medium" ? 1 : 2)
                 .ThenByDescending(l => l.SavedAt)
                 .Select(l => new
@@ -39,7 +53,7 @@ namespace RoofingLeadGeneration.Controllers
                     l.EstimatedDamage, l.PropertyType,
                     l.SourceAddress, l.SavedAt, l.Notes,
                     l.OwnerName, l.OwnerPhone, l.OwnerEmail,
-                    l.YearBuilt
+                    l.YearBuilt, l.IsEnriched
                 })
                 .ToListAsync();
 
@@ -63,6 +77,8 @@ namespace RoofingLeadGeneration.Controllers
                 var existing = await _db.Leads.FirstOrDefaultAsync(l => l.Address == p.Address);
                 if (existing != null)
                 {
+                    // Restore if previously archived
+                    existing.DeletedAt       = null;
                     existing.Lat             = p.Lat;
                     existing.Lng             = p.Lng;
                     existing.RiskLevel       = p.RiskLevel;
@@ -123,15 +139,122 @@ namespace RoofingLeadGeneration.Controllers
             var lead = await _db.Leads.FindAsync(id);
             if (lead == null) return NotFound(new { error = "Lead not found." });
 
-            var services   = HttpContext.RequestServices;
-            var config     = services.GetService<IConfiguration>();
-            var realData   = services.GetRequiredService<RealDataService>();
-            var bstApiKey  = config?["BatchSkipTracing:ApiKey"];
+            return Json(await EnrichLeadAsync(lead));
+        }
 
-            string?  ownerName = null;
-            int?     yearBuilt = null;
-            string   provider  = "regrid";
-            string   status    = "not_found";
+        // ── POST /Leads/BulkEnrich ───────────────────────────────────
+        [HttpPost("BulkEnrich")]
+        public async Task<IActionResult> BulkEnrich([FromBody] BulkRequest req)
+        {
+            if (req?.Ids == null || req.Ids.Length == 0)
+                return BadRequest(new { error = "No lead IDs provided." });
+
+            var userId = CurrentUserId;
+            var leads  = await _db.Leads
+                .Where(l => req.Ids.Contains(l.Id) &&
+                            (l.UserId == userId || l.UserId == null) &&
+                            !l.IsEnriched && l.DeletedAt == null)
+                .ToListAsync();
+
+            var results = new List<object>();
+            foreach (var lead in leads)
+            {
+                var r = await EnrichLeadAsync(lead);
+                results.Add(new { id = lead.Id, result = r });
+            }
+
+            return Json(new { processed = results.Count, results });
+        }
+
+        // ── POST /Leads/{id}/Restore ─────────────────────────────────
+        [HttpPost("{id:long}/Restore")]
+        public async Task<IActionResult> Restore(long id)
+        {
+            var userId = CurrentUserId;
+            var lead   = await _db.Leads.FindAsync(id);
+            if (lead == null || (lead.UserId != userId && lead.UserId != null))
+                return NotFound(new { error = "Lead not found." });
+
+            lead.DeletedAt = null;
+            await _db.SaveChangesAsync();
+            return Json(new { restored = true });
+        }
+
+        // ── POST /Leads/BulkArchive ──────────────────────────────────
+        // Soft-deletes leads — enriched leads are protected and skipped.
+        [HttpPost("BulkArchive")]
+        public async Task<IActionResult> BulkArchive([FromBody] BulkRequest req)
+        {
+            if (req?.Ids == null || req.Ids.Length == 0)
+                return BadRequest(new { error = "No lead IDs provided." });
+
+            var userId = CurrentUserId;
+            var leads  = await _db.Leads
+                .Where(l => req.Ids.Contains(l.Id) &&
+                            (l.UserId == userId || l.UserId == null) &&
+                            !l.IsEnriched && l.DeletedAt == null)
+                .ToListAsync();
+
+            var now = DateTime.UtcNow;
+            foreach (var lead in leads)
+                lead.DeletedAt = now;
+
+            await _db.SaveChangesAsync();
+            return Json(new { archived = leads.Count });
+        }
+
+        // ── GET /Leads/Stats ─────────────────────────────────────────
+        [HttpGet("Stats")]
+        public async Task<IActionResult> Stats()
+        {
+            var userId = CurrentUserId;
+            var now    = DateTime.UtcNow;
+            var som    = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+
+            var allLeadsQ    = _db.Leads.Where(l => l.UserId == userId || l.UserId == null);
+            var activeLeadsQ = allLeadsQ.Where(l => l.DeletedAt == null);
+            var enrichmentsQ = _db.Enrichments.Where(e => e.UserId == userId);
+
+            return Json(new
+            {
+                totalLeads           = await activeLeadsQ.CountAsync(),
+                leadsThisMonth       = await activeLeadsQ.CountAsync(l => l.SavedAt >= som),
+                unenrichedCount      = await activeLeadsQ.CountAsync(l => !l.IsEnriched),
+                enrichedCount        = await activeLeadsQ.CountAsync(l => l.IsEnriched),
+                archivedCount        = await allLeadsQ.CountAsync(l => l.DeletedAt != null),
+                totalEnrichments     = await enrichmentsQ.CountAsync(),
+                enrichmentsThisMonth = await enrichmentsQ.CountAsync(e => e.CreatedAt >= som)
+            });
+        }
+
+        // ── DELETE /Leads/{id} — soft delete ─────────────────────────
+        [HttpDelete("{id:long}")]
+        public async Task<IActionResult> Delete(long id)
+        {
+            var lead = await _db.Leads.FindAsync(id);
+            if (lead == null) return NotFound();
+            if (lead.IsEnriched)
+                return BadRequest(new { error = "Enriched leads cannot be deleted." });
+
+            lead.DeletedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            return NoContent();
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // Shared enrichment logic
+        // ─────────────────────────────────────────────────────────────
+        private async Task<object> EnrichLeadAsync(Lead lead)
+        {
+            var services  = HttpContext.RequestServices;
+            var config    = services.GetService<IConfiguration>();
+            var realData  = services.GetRequiredService<RealDataService>();
+            var bstApiKey = config?["BatchSkipTracing:ApiKey"];
+
+            string? ownerName = null;
+            int?    yearBuilt = null;
+            string  provider  = "regrid";
+            string  status    = "not_found";
 
             // ── Step 1: Regrid — owner name + year built ─────────────
             var parcel = await realData.GetRegridParcelDataAsync(
@@ -149,17 +272,21 @@ namespace RoofingLeadGeneration.Controllers
                     lead.YearBuilt = yearBuilt;
             }
 
-            // ── Step 2: BatchSkipTracing — phone + email (when configured) ──
+            // ── Step 2: BatchSkipTracing — phone + email ─────────────
             if (!string.IsNullOrWhiteSpace(bstApiKey))
             {
                 provider = "batchskiptracing";
                 // TODO: call BatchSkipTracing API
             }
 
+            // Mark as enriched if we got anything useful
+            if (status == "completed")
+                lead.IsEnriched = true;
+
             _db.Enrichments.Add(new Enrichment
             {
                 UserId      = CurrentUserId,
-                LeadId      = id,
+                LeadId      = lead.Id,
                 Address     = lead.Address,
                 Status      = status,
                 Provider    = provider,
@@ -169,38 +296,7 @@ namespace RoofingLeadGeneration.Controllers
 
             await _db.SaveChangesAsync();
 
-            return Json(new { status, ownerName, yearBuilt, ownerPhone = lead.OwnerPhone, ownerEmail = lead.OwnerEmail });
-        }
-
-        // ── GET /Leads/Stats ─────────────────────────────────────────
-        [HttpGet("Stats")]
-        public async Task<IActionResult> Stats()
-        {
-            var userId = CurrentUserId;
-            var now    = DateTime.UtcNow;
-            var som    = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-
-            var leadsQ      = _db.Leads.Where(l => l.UserId == userId || l.UserId == null);
-            var enrichmentsQ = _db.Enrichments.Where(e => e.UserId == userId);
-
-            return Json(new
-            {
-                totalLeads           = await leadsQ.CountAsync(),
-                leadsThisMonth       = await leadsQ.CountAsync(l => l.SavedAt >= som),
-                totalEnrichments     = await enrichmentsQ.CountAsync(),
-                enrichmentsThisMonth = await enrichmentsQ.CountAsync(e => e.CreatedAt >= som)
-            });
-        }
-
-        // ── DELETE /Leads/{id} ───────────────────────────────────────
-        [HttpDelete("{id:long}")]
-        public async Task<IActionResult> Delete(long id)
-        {
-            var lead = await _db.Leads.FindAsync(id);
-            if (lead == null) return NotFound();
-            _db.Leads.Remove(lead);
-            await _db.SaveChangesAsync();
-            return NoContent();
+            return new { status, ownerName, yearBuilt, ownerPhone = lead.OwnerPhone, ownerEmail = lead.OwnerEmail };
         }
 
         // ── DTOs ─────────────────────────────────────────────────────
@@ -229,6 +325,11 @@ namespace RoofingLeadGeneration.Controllers
             [JsonPropertyName("ownerName")]  public string? OwnerName  { get; set; }
             [JsonPropertyName("ownerPhone")] public string? OwnerPhone { get; set; }
             [JsonPropertyName("ownerEmail")] public string? OwnerEmail { get; set; }
+        }
+
+        public class BulkRequest
+        {
+            [JsonPropertyName("ids")] public long[]? Ids { get; set; }
         }
     }
 }
