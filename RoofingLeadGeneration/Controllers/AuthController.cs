@@ -105,6 +105,21 @@ namespace RoofingLeadGeneration.Controllers
             return Redirect("/Auth/Login");
         }
 
+        // ── GET /Auth/DemoLogin ─────────────────────────────────────
+        // Shared read-only demo account — enabled when Auth:DemoEnabled = true in config
+        [HttpGet("DemoLogin")]
+        public async Task<IActionResult> DemoLogin(string? returnUrl = "/")
+        {
+            var cfg         = HttpContext.RequestServices.GetService<IConfiguration>();
+            var demoEnabled = string.Equals(cfg?["Auth:DemoEnabled"], "true", StringComparison.OrdinalIgnoreCase);
+            if (!demoEnabled && !_env.IsDevelopment()) return NotFound();
+
+            var userId = await FindOrCreateUserAsync("demo", "demo-user-1", "demo@stormlead.pro", "Demo User");
+            await SignInUserAsync(userId, "demo", "demo-user-1", "demo@stormlead.pro", "Demo User");
+            _logger.LogInformation("Demo account login (id={Id})", userId);
+            return LocalRedirect(returnUrl ?? "/");
+        }
+
         // ── GET /Auth/DevLogin ──────────────────────────────────────
         // ⚠️  DEV BACKDOOR — returns 404 in Production
         [HttpGet("DevLogin")]
