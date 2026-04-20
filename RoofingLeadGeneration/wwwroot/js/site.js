@@ -117,16 +117,43 @@
         }
         mapMarkers = [];
 
-        leafletMap = L.map('map', {
-            center: [lat, lng],
-            zoom: 15,
-            zoomControl: true
-        });
+        leafletMap = L.map('map', { center: [lat, lng], zoom: 15, zoomControl: true });
 
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://carto.com">CARTO</a>',
-            maxZoom: 19
-        }).addTo(leafletMap);
+        const tileSatellite = L.tileLayer(
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            { attribution: 'Tiles &copy; Esri', maxZoom: 19 }
+        );
+        const tileStreet = L.tileLayer(
+            'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+            { attribution: '&copy; CARTO', maxZoom: 19 }
+        );
+        tileSatellite.addTo(leafletMap);
+
+        // Layer toggle button (top-right)
+        let _satellite = true;
+        const toggleCtrl = L.control({ position: 'topright' });
+        toggleCtrl.onAdd = () => {
+            const div = L.DomUtil.create('div');
+            div.innerHTML = `<button id="mapLayerBtn" title="Switch map style"
+                style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;
+                       padding:5px 10px;border-radius:8px;font-size:11px;font-weight:600;
+                       cursor:pointer;display:flex;align-items:center;gap:5px;box-shadow:0 2px 6px rgba(0,0,0,0.4)">
+                <i class="fa-solid fa-map"></i>&nbsp;Street
+            </button>`;
+            L.DomEvent.disableClickPropagation(div);
+            div.querySelector('button').addEventListener('click', () => {
+                _satellite = !_satellite;
+                if (_satellite) {
+                    tileStreet.remove(); tileSatellite.addTo(leafletMap);
+                    div.querySelector('button').innerHTML = '<i class="fa-solid fa-map"></i>&nbsp;Street';
+                } else {
+                    tileSatellite.remove(); tileStreet.addTo(leafletMap);
+                    div.querySelector('button').innerHTML = '<i class="fa-solid fa-satellite"></i>&nbsp;Satellite';
+                }
+            });
+            return div;
+        };
+        toggleCtrl.addTo(leafletMap);
 
         // Center marker (star)
         const centerIcon = L.divIcon({
@@ -171,6 +198,19 @@
 
     function buildPopupHtml(p) {
         const c = riskColor(p.riskLevel);
+        let claimHtml = '';
+        if (p.claimWindowTier === 'hot' || p.claimWindowTier === 'fileable') {
+            const stormMs   = p.lastStormDate && p.lastStormDate !== 'No data'
+                                ? new Date(p.lastStormDate).getTime() : null;
+            const daysSince = stormMs ? Math.floor((Date.now() - stormMs) / 86400000) : null;
+            const daysLeft  = daysSince != null ? Math.max(0, 730 - daysSince) : null;
+            const leftLabel = daysLeft != null ? ` (~${daysLeft}d left)` : '';
+            if (p.claimWindowTier === 'hot') {
+                claimHtml = `<div style="margin-top:5px;padding:3px 8px;border-radius:6px;background:#7c2d1222;border:1px solid #f9731644;font-size:11px;font-weight:700;color:#fb923c">🔥 Hot Lead — File Now!${leftLabel}</div>`;
+            } else {
+                claimHtml = `<div style="margin-top:5px;padding:3px 8px;border-radius:6px;background:#45350022;border:1px solid #ca8a0444;font-size:11px;font-weight:700;color:#fbbf24">⏳ Still Fileable${leftLabel}</div>`;
+            }
+        }
         return `
             <div style="min-width:180px;font-family:system-ui,sans-serif;color:#0f172a">
                 <div style="font-weight:700;font-size:13px;margin-bottom:4px">${p.address}</div>
@@ -182,6 +222,7 @@
                     <b>Hail:</b> ${p.hailSize}<br>
                     <b>Storm:</b> ${p.lastStormDate}
                 </div>
+                ${claimHtml}
             </div>`;
     }
 
@@ -258,9 +299,44 @@
             Low:    'fa-circle-check'
         }[p.riskLevel] || 'fa-circle';
 
-        const sourceBadge = p.dataSource === 'noaa'
-            ? '<span class="source-badge source-badge--noaa">NOAA</span>'
-            : '<span class="source-badge source-badge--est">EST</span>';
+        const sourceBadge = (p.dataSource || '').includes('lsr')
+            ? '<span class="source-badge source-badge--lsr">LSR+NOAA</span>'
+            : (p.dataSource === 'noaa'
+                ? '<span class="source-badge source-badge--noaa">NOAA</span>'
+                : '<span class="source-badge source-badge--est">EST</span>');
+
+        // ── Claim window badge (Texas 2-yr statute of limitations) ──
+        // Always derive days from lastStormDate so the number matches what's shown on the card.
+        let claimBadgeHtml = '';
+        if (p.claimWindowTier === 'hot' || p.claimWindowTier === 'fileable') {
+            const stormMs   = p.lastStormDate && p.lastStormDate !== 'No data'
+                                ? new Date(p.lastStormDate).getTime() : null;
+            const daysSince = stormMs ? Math.floor((Date.now() - stormMs) / 86400000) : null;
+            const daysLeft  = daysSince != null ? Math.max(0, 730 - daysSince) : null;
+            const leftLabel = daysLeft != null ? `~${daysLeft}d left to file` : '';
+
+            if (p.claimWindowTier === 'hot') {
+                claimBadgeHtml = `
+                <div class="col-span-2 rounded-lg px-3 py-2 claim-hot">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-fire text-orange-400"></i>
+                        <span class="font-bold text-orange-300 text-xs">Hot Lead — File Now!</span>
+                        <span class="ml-auto text-orange-400/70 text-xs">${leftLabel}</span>
+                    </div>
+                    <p class="text-orange-400/50 text-xs mt-1" style="font-size:10px">Filing windows vary by policy — consult your adjuster.</p>
+                </div>`;
+            } else {
+                claimBadgeHtml = `
+                <div class="col-span-2 rounded-lg px-3 py-2 claim-fileable">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-clock text-yellow-400"></i>
+                        <span class="font-bold text-yellow-200 text-xs">Still Fileable (TX 2-yr window)</span>
+                        <span class="ml-auto text-yellow-400/70 text-xs">${leftLabel}</span>
+                    </div>
+                    <p class="text-yellow-400/50 text-xs mt-1" style="font-size:10px">Filing windows vary by policy — consult your adjuster.</p>
+                </div>`;
+            }
+        }
 
         return `
         <div class="prop-card bg-slate-800/70 border border-slate-700/60 rounded-2xl p-4 mb-3 cursor-pointer"
@@ -283,9 +359,11 @@
             </div>
 
             <div class="grid grid-cols-2 gap-2 text-xs ml-7">
+                ${claimBadgeHtml}
                 <div class="bg-slate-900/50 rounded-lg px-3 py-2">
                     <p class="text-slate-500 mb-0.5">Hail Size</p>
                     <p class="text-slate-200 font-semibold"><i class="fa-solid fa-cloud-showers-heavy text-brand mr-1"></i>${escapeHtml(p.hailSize)}</p>
+                    <p class="text-slate-400 text-xs mt-0.5">${hailComparison(p.hailSize)}</p>
                 </div>
                 <div class="bg-slate-900/50 rounded-lg px-3 py-2">
                     <p class="text-slate-500 mb-0.5">Last Storm ${sourceBadge}</p>
@@ -372,6 +450,19 @@
     }
 
     // ─── Helpers ──────────────────────────────────────────────────
+    function hailComparison(sizeStr) {
+        const m = (sizeStr || '').match(/[\d.]+/);
+        if (!m) return '';
+        const s = parseFloat(m[0]);
+        if (s >= 2.75) return '⚾ Baseball';
+        if (s >= 1.75) return '⛳ Golf Ball';
+        if (s >= 1.50) return '🏓 Ping Pong';
+        if (s >= 1.00) return '🪙 Quarter';
+        if (s >= 0.75) return '🪙 Penny';
+        if (s >= 0.50) return '🔵 Marble';
+        return '🟡 Pea';
+    }
+
     function riskColor(level) {
         return level === 'High' ? '#ef4444' : level === 'Medium' ? '#f97316' : '#22c55e';
     }
@@ -384,11 +475,35 @@
             .replace(/"/g, '&quot;');
     }
 
+    const _scanSteps = [
+        { icon: 'fa-map-pin',            label: 'Locating address…'       },
+        { icon: 'fa-satellite-dish',      label: 'Fetching storm data…'    },
+        { icon: 'fa-cloud-bolt',          label: 'Analyzing hail events…'  },
+        { icon: 'fa-house-chimney-crack', label: 'Scoring properties…'     },
+        { icon: 'fa-check',              label: 'Almost done…'            },
+    ];
+    let _stepTimers = [];
+
     function setLoading(on) {
-        document.getElementById('btnText').classList.toggle('hidden', on);
-        document.getElementById('btnSpinner').classList.toggle('hidden', !on);
-        document.getElementById('scanBtn').disabled = on;
-        document.getElementById('scanBtn').style.opacity = on ? '0.7' : '1';
+        const btn  = document.getElementById('scanBtn');
+        const text = document.getElementById('btnText');
+
+        btn.disabled = on;
+        _stepTimers.forEach(t => clearTimeout(t));
+        _stepTimers = [];
+
+        if (on) {
+            // Show steps at 0s, 2s, 4s, 6s, 8s
+            _scanSteps.forEach((step, i) => {
+                const t = setTimeout(() => {
+                    text.innerHTML =
+                        `<i class="fa-solid ${step.icon} mr-1.5"></i>${step.label}`;
+                }, i * 2000);
+                _stepTimers.push(t);
+            });
+        } else {
+            text.innerHTML = '<i class="fa-solid fa-radar mr-1"></i>Scan Neighborhood';
+        }
     }
 
     function showError(msg) {

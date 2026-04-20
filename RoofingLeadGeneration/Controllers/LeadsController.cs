@@ -22,11 +22,14 @@ namespace RoofingLeadGeneration.Controllers
         [HttpGet("Saved")]
         public IActionResult Saved() => View();
 
-        // ── GET /Leads?tab=unenriched|enriched|archived ──────────────
+        // ── GET /Leads?tab=unenriched|pipeline|closed|archived ───────
         [HttpGet]
         public async Task<IActionResult> Index(string tab = "unenriched")
         {
             var userId = CurrentUserId;
+
+            var activeStatuses = new[] { "new", "contacted", "appointment_set" };
+            var closedStatuses = new[] { "closed_won", "closed_lost" };
 
             IQueryable<Lead> query;
             if (tab == "archived")
@@ -38,9 +41,12 @@ namespace RoofingLeadGeneration.Controllers
             {
                 query = _db.Leads
                     .Where(l => (l.UserId == userId || l.UserId == null) && l.DeletedAt == null);
-                query = tab == "enriched"
-                    ? query.Where(l => l.IsEnriched)
-                    : query.Where(l => !l.IsEnriched);
+                query = tab switch
+                {
+                    "pipeline" => query.Where(l => l.IsEnriched && activeStatuses.Contains(l.Status)),
+                    "closed"   => query.Where(l => l.IsEnriched && closedStatuses.Contains(l.Status)),
+                    _          => query.Where(l => !l.IsEnriched)   // unenriched (default)
+                };
             }
 
             var leads = await query
@@ -53,7 +59,11 @@ namespace RoofingLeadGeneration.Controllers
                     l.EstimatedDamage, l.PropertyType,
                     l.SourceAddress, l.SavedAt, l.Notes,
                     l.OwnerName, l.OwnerPhone, l.OwnerEmail,
-                    l.YearBuilt, l.IsEnriched
+                    l.YearBuilt, l.IsEnriched, l.Status,
+                    Contacts = l.Contacts.Select(c => new {
+                        c.Id, c.Name, c.Phone, c.Email,
+                        c.ContactType, c.IsPrimary, c.Source
+                    }).ToList()
                 })
                 .ToListAsync();
 
@@ -166,6 +176,38 @@ namespace RoofingLeadGeneration.Controllers
             return Json(new { processed = results.Count, results });
         }
 
+        // ── PATCH /Leads/{id}/Notes ─────────────────────────────────
+        [HttpPatch("{id:long}/Notes")]
+        public async Task<IActionResult> PatchNotes(long id, [FromBody] PatchNotesRequest req)
+        {
+            var userId = CurrentUserId;
+            var lead   = await _db.Leads.FindAsync(id);
+            if (lead == null || (lead.UserId != userId && lead.UserId != null))
+                return NotFound(new { error = "Lead not found." });
+
+            lead.Notes = req.Notes?.Trim();
+            await _db.SaveChangesAsync();
+            return Json(new { saved = true });
+        }
+
+        // ── PATCH /Leads/{id}/Status ─────────────────────────────────
+        [HttpPatch("{id:long}/Status")]
+        public async Task<IActionResult> PatchStatus(long id, [FromBody] PatchStatusRequest req)
+        {
+            var valid = new[] { "new", "contacted", "appointment_set", "closed_won", "closed_lost" };
+            if (!valid.Contains(req.Status))
+                return BadRequest(new { error = "Invalid status value." });
+
+            var userId = CurrentUserId;
+            var lead   = await _db.Leads.FindAsync(id);
+            if (lead == null || (lead.UserId != userId && lead.UserId != null))
+                return NotFound(new { error = "Lead not found." });
+
+            lead.Status = req.Status;
+            await _db.SaveChangesAsync();
+            return Json(new { saved = true, status = req.Status });
+        }
+
         // ── POST /Leads/{id}/Restore ─────────────────────────────────
         [HttpPost("{id:long}/Restore")]
         public async Task<IActionResult> Restore(long id)
@@ -220,7 +262,8 @@ namespace RoofingLeadGeneration.Controllers
                 totalLeads           = await activeLeadsQ.CountAsync(),
                 leadsThisMonth       = await activeLeadsQ.CountAsync(l => l.SavedAt >= som),
                 unenrichedCount      = await activeLeadsQ.CountAsync(l => !l.IsEnriched),
-                enrichedCount        = await activeLeadsQ.CountAsync(l => l.IsEnriched),
+                pipelineCount        = await activeLeadsQ.CountAsync(l => l.IsEnriched && new[] { "new", "contacted", "appointment_set" }.Contains(l.Status)),
+                closedCount          = await activeLeadsQ.CountAsync(l => l.IsEnriched && new[] { "closed_won", "closed_lost" }.Contains(l.Status)),
                 archivedCount        = await allLeadsQ.CountAsync(l => l.DeletedAt != null),
                 totalEnrichments     = await enrichmentsQ.CountAsync(),
                 enrichmentsThisMonth = await enrichmentsQ.CountAsync(e => e.CreatedAt >= som)
@@ -250,6 +293,7 @@ namespace RoofingLeadGeneration.Controllers
             var config    = services.GetService<IConfiguration>();
             var realData  = services.GetRequiredService<RealDataService>();
             var bstApiKey = config?["BatchSkipTracing:ApiKey"];
+            var wpApiKey  = config?["WhitepagesPro:ApiKey"];
 
             string? ownerName = null;
             int?    yearBuilt = null;
@@ -272,64 +316,50 @@ namespace RoofingLeadGeneration.Controllers
                     lead.YearBuilt = yearBuilt;
             }
 
-            // ── Step 2: BatchSkipTracing — phone + email ─────────────
-            if (!string.IsNullOrWhiteSpace(bstApiKey))
+            // ── Step 2: Whitepages Pro — phone + email ────────────────
+            if (!string.IsNullOrWhiteSpace(wpApiKey))
             {
-                provider = "batchskiptracing";
-                // TODO: call BatchSkipTracing API
+                provider = "whitepages";
+                var contacts = await realData.GetWhitepagesContactAsync(
+                    wpApiKey, lead.OwnerName, lead.Address);
+
+                if (contacts.Count > 0)
+                {
+                    // Remove stale contacts from a previous enrich
+                    var old = _db.LeadContacts.Where(c => c.LeadId == lead.Id);
+                    _db.LeadContacts.RemoveRange(old);
+
+                    for (int i = 0; i < contacts.Count; i++)
+                    {
+                        var c       = contacts[i];
+                        var primary = i == 0;
+
+                        _db.LeadContacts.Add(new Data.Models.LeadContact
+                        {
+                            LeadId      = lead.Id,
+                            Name        = c.OwnerName,
+                            Phone       = c.Phone,
+                            Email       = c.Email,
+                            ContactType = c.ContactType,
+                            IsPrimary   = primary,
+                            Source      = "whitepages",
+                            CreatedAt   = DateTime.UtcNow
+                        });
+
+                        // Populate legacy fields from the primary contact
+                        if (primary)
+                        {
+                            if (c.OwnerName != null && lead.OwnerName == null)
+                                lead.OwnerName = c.OwnerName;
+                            if (c.Phone != null && lead.OwnerPhone == null)
+                                lead.OwnerPhone = c.Phone;
+                            if (c.Email != null && lead.OwnerEmail == null)
+                                lead.OwnerEmail = c.Email;
+                        }
+                    }
+
+                    status = "completed";
+                }
             }
-
-            // Mark as enriched if we got anything useful
-            if (status == "completed")
-                lead.IsEnriched = true;
-
-            _db.Enrichments.Add(new Enrichment
-            {
-                UserId      = CurrentUserId,
-                LeadId      = lead.Id,
-                Address     = lead.Address,
-                Status      = status,
-                Provider    = provider,
-                CreditsUsed = 1,
-                CreatedAt   = DateTime.UtcNow
-            });
-
-            await _db.SaveChangesAsync();
-
-            return new { status, ownerName, yearBuilt, ownerPhone = lead.OwnerPhone, ownerEmail = lead.OwnerEmail };
-        }
-
-        // ── DTOs ─────────────────────────────────────────────────────
-
-        public class SaveRequest
-        {
-            [JsonPropertyName("sourceAddress")] public string?       SourceAddress { get; set; }
-            [JsonPropertyName("properties")]    public PropertyDto[]? Properties   { get; set; }
-        }
-
-        public class PropertyDto
-        {
-            [JsonPropertyName("address")]         public string? Address         { get; set; }
-            [JsonPropertyName("lat")]             public double  Lat             { get; set; }
-            [JsonPropertyName("lng")]             public double  Lng             { get; set; }
-            [JsonPropertyName("riskLevel")]       public string? RiskLevel       { get; set; }
-            [JsonPropertyName("lastStormDate")]   public string? LastStormDate   { get; set; }
-            [JsonPropertyName("hailSize")]        public string? HailSize        { get; set; }
-            [JsonPropertyName("estimatedDamage")] public string? EstimatedDamage { get; set; }
-            [JsonPropertyName("roofAge")]         public int     RoofAge         { get; set; }
-            [JsonPropertyName("propertyType")]    public string? PropertyType    { get; set; }
-        }
-
-        public class OwnerDto
-        {
-            [JsonPropertyName("ownerName")]  public string? OwnerName  { get; set; }
-            [JsonPropertyName("ownerPhone")] public string? OwnerPhone { get; set; }
-            [JsonPropertyName("ownerEmail")] public string? OwnerEmail { get; set; }
-        }
-
-        public class BulkRequest
-        {
-            [JsonPropertyName("ids")] public long[]? Ids { get; set; }
-        }
-    }
-}
+            // ── Step 2b: BatchSkipTracing fallback (if WP not configured) ─
+            else if (!string.IsNullOrWhiteSpa

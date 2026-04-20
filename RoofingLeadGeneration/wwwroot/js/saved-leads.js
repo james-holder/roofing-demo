@@ -1,11 +1,13 @@
 // saved-leads.js
-let allLeads    = [];
-let sortCol     = 'riskLevel';
-let sortDir     = 'desc';
-let activeFilter= 'all';
-let activeTab   = 'unenriched';   // 'unenriched' | 'enriched' | 'archived'
-let selectedIds = new Set();
-let editingId   = null;
+let allLeads      = [];
+let sortCol       = 'riskLevel';
+let sortDir       = 'desc';
+let activeFilter  = 'all';
+let activeTab     = 'unenriched';   // 'unenriched' | 'pipeline' | 'closed' | 'archived'
+let selectedIds   = new Set();
+let editingId      = null;
+let editingNotesId = null;
+let viewingContactsId = null;
 
 document.addEventListener('DOMContentLoaded', function() { loadLeads(); refreshTabCounts(); });
 
@@ -14,9 +16,13 @@ function switchLeadTab(tab) {
     activeTab = tab;
     selectedIds.clear();
     activeFilter = 'all';
+    editingId = null;
+    editingNotesId = null;
+    viewingContactsId = null;
 
     document.getElementById('tabUnenriched').classList.toggle('lead-tab-active', tab === 'unenriched');
-    document.getElementById('tabEnriched').classList.toggle('lead-tab-active',   tab === 'enriched');
+    document.getElementById('tabPipeline').classList.toggle('lead-tab-active',  tab === 'pipeline');
+    document.getElementById('tabClosed').classList.toggle('lead-tab-active',    tab === 'closed');
     document.getElementById('tabArchived').classList.toggle('lead-tab-active',   tab === 'archived');
 
     // Bulk toolbar & checkbox only on unenriched tab
@@ -39,7 +45,7 @@ async function loadLeads() {
     } catch (e) {
         setLoading(false);
         document.getElementById('leadsBody').innerHTML =
-            '<tr><td colspan="10" class="text-center text-red-400 py-8 text-sm px-4">' +
+            '<tr><td colspan="11" class="text-center text-red-400 py-8 text-sm px-4">' +
             '<i class="fa-solid fa-triangle-exclamation mr-2"></i>Failed to load: ' + escapeHtml(e.message) + '</td></tr>';
     }
 }
@@ -50,19 +56,23 @@ async function refreshTabCounts() {
         if (!r.ok) return;
         const s = await r.json();
         var uel = document.getElementById('tabUnenrichedCount');
-        var eel = document.getElementById('tabEnrichedCount');
+        var pel = document.getElementById('tabPipelineCount');
+        var cel = document.getElementById('tabClosedCount');
         var ael = document.getElementById('tabArchivedCount');
         if (uel) uel.textContent = s.unenrichedCount ?? '';
-        if (eel) eel.textContent = s.enrichedCount   ?? '';
+        if (pel) pel.textContent = s.pipelineCount   ?? '';
+        if (cel) cel.textContent = s.closedCount     ?? '';
         if (ael) ael.textContent = s.archivedCount   ?? '';
     } catch {}
 }
 
 function updateTabCounts() {
     var uel = document.getElementById('tabUnenrichedCount');
-    var eel = document.getElementById('tabEnrichedCount');
+    var pel = document.getElementById('tabPipelineCount');
+    var cel = document.getElementById('tabClosedCount');
     if (activeTab === 'unenriched' && uel) uel.textContent = allLeads.length;
-    if (activeTab === 'enriched'   && eel) eel.textContent = allLeads.length;
+    if (activeTab === 'pipeline'   && pel) pel.textContent = allLeads.length;
+    if (activeTab === 'closed'     && cel) cel.textContent = allLeads.length;
     const cnt = allLeads.length;
     var hero = document.getElementById('heroCount');
     if (hero) hero.textContent = cnt ? '(' + cnt + ')' : '';
@@ -84,6 +94,7 @@ function sortBy(col) {
 
 function getSortValue(lead, col) {
     const riskOrder = { High:0, Medium:1, Low:2 };
+    const statusOrder = { new:0, contacted:1, appointment_set:2, closed_won:3, closed_lost:4 };
     switch (col) {
         case 'address':       return (lead.address      || '').toLowerCase();
         case 'riskLevel':     return riskOrder[lead.riskLevel] != null ? riskOrder[lead.riskLevel] : 3;
@@ -93,6 +104,7 @@ function getSortValue(lead, col) {
         case 'ownerName':     return (lead.ownerName    || '').toLowerCase();
         case 'ownerPhone':    return (lead.ownerPhone   || '').toLowerCase();
         case 'ownerEmail':    return (lead.ownerEmail   || '').toLowerCase();
+        case 'status':        return statusOrder[lead.status] != null ? statusOrder[lead.status] : 5;
         default:              return '';
     }
 }
@@ -113,7 +125,7 @@ function toggleRowSelect(cb) {
     if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
     updateBulkToolbar();
     // Sync select-all checkbox
-    var allCbs  = document.querySelectorAll('.row-checkbox');
+    var allCbs   = document.querySelectorAll('.row-checkbox');
     var selectAll = document.getElementById('selectAll');
     if (selectAll) selectAll.checked = allCbs.length > 0 && Array.from(allCbs).every(function(c) { return c.checked; });
 }
@@ -134,7 +146,7 @@ async function bulkEnrich() {
     var btn  = document.getElementById('btnBulkEnrich');
     var orig = btn.innerHTML;
     btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Enriching ' + ids.length + '…';
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Enriching ' + ids.length + '...';
 
     try {
         var resp = await fetch('/Leads/BulkEnrich', {
@@ -169,7 +181,7 @@ async function bulkArchive() {
     var btn  = document.getElementById('btnBulkArchive');
     var orig = btn.innerHTML;
     btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Archiving…';
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Archiving...';
 
     try {
         var resp = await fetch('/Leads/BulkArchive', {
@@ -240,15 +252,117 @@ function renderTable() {
     document.querySelectorAll('.row-checkbox').forEach(function(cb) {
         cb.checked = selectedIds.has(parseInt(cb.dataset.id));
     });
+
+    // Auto-focus notes textarea if open
+    if (editingNotesId != null) {
+        var ta = document.getElementById('notesArea_' + editingNotesId);
+        if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    }
 }
 
+// ── Status helpers ────────────────────────────────────────────────
+function statusClass(status) {
+    var map = { new:'new', contacted:'contacted', appointment_set:'appt', closed_won:'won', closed_lost:'lost' };
+    return 'status-' + (map[status] || 'new');
+}
+
+function buildStatusDropdown(lead) {
+    var statuses = [
+        { value: 'new',             label: 'New'        },
+        { value: 'contacted',       label: 'Contacted'  },
+        { value: 'appointment_set', label: 'Appt Set'   },
+        { value: 'closed_won',      label: 'Won ✓'      },
+        { value: 'closed_lost',     label: 'Lost ✗'     },
+    ];
+    var cur = lead.status || 'new';
+    return '<select onchange="setStatus(' + lead.id + ', this.value)" class="status-select ' + statusClass(cur) + '">' +
+        statuses.map(function(s) {
+            return '<option value="' + s.value + '"' + (s.value === cur ? ' selected' : '') + '>' + s.label + '</option>';
+        }).join('') +
+        '</select>';
+}
+
+async function setStatus(id, value) {
+    try {
+        var resp = await fetch('/Leads/' + id + '/Status', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: value })
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var lead = allLeads.find(function(l) { return l.id === id; });
+        if (lead) lead.status = value;
+
+        // Check if this lead has moved out of the current tab
+        var pipelineStatuses = ['new', 'contacted', 'appointment_set'];
+        var closedStatuses   = ['closed_won', 'closed_lost'];
+        var leavesTab = (activeTab === 'pipeline' && closedStatuses.includes(value)) ||
+                        (activeTab === 'closed'   && pipelineStatuses.includes(value));
+
+        if (leavesTab) {
+            allLeads = allLeads.filter(function(l) { return l.id !== id; });
+            showToast('Status updated — lead moved to ' + (closedStatuses.includes(value) ? 'Closed' : 'Pipeline'), true);
+            updateTabCounts();
+            renderTable();
+            refreshTabCounts();
+        } else {
+            // Same tab — just repaint the dropdown colour in place
+            document.querySelectorAll('[data-lead-id="' + id + '"] .status-select').forEach(function(sel) {
+                sel.className = 'status-select ' + statusClass(value);
+            });
+            showToast('Status updated', true);
+        }
+    } catch(e) {
+        showToast('Failed to update status: ' + e.message, false);
+        renderTable(); // revert visual
+    }
+}
+
+// ── Contacts panel helpers ────────────────────────────────────────
+function toggleContacts(id) {
+    editingNotesId = null; // close notes if open
+    viewingContactsId = (viewingContactsId === id) ? null : id;
+    renderTable();
+}
+
+// ── Notes helpers ─────────────────────────────────────────────────
+function openNotes(id) {
+    editingId = null; // exit owner-edit if open
+    viewingContactsId = null; // close contacts if open
+    editingNotesId = id;
+    renderTable();
+}
+function closeNotes() {
+    editingNotesId = null;
+    renderTable();
+}
+
+async function saveNotes(id) {
+    var ta   = document.getElementById('notesArea_' + id);
+    var text = ta ? (ta.value || '').trim() : null;
+    try {
+        var resp = await fetch('/Leads/' + id + '/Notes', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notes: text || null })
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var lead = allLeads.find(function(l) { return l.id === id; });
+        if (lead) lead.notes = text || null;
+        editingNotesId = null;
+        renderTable();
+        showToast('Notes saved', true);
+    } catch(e) { showToast('Save failed: ' + e.message, false); }
+}
+
+// ── Table rendering ───────────────────────────────────────────────
 function buildRow(lead) {
     const rc  = ({ High:'badge-high', Medium:'badge-medium', Low:'badge-low' }[lead.riskLevel]) || 'badge-low';
     const ed  = editingId === lead.id;
     const dash= '<span class="text-slate-600 italic">\u2014</span>';
 
     const nm = ed
-        ? '<input class="owner-input" id="eName_'  + lead.id + '" value="' + escapeAttr(lead.ownerName  || '') + '" placeholder="Owner name…" />'
+        ? '<input class="owner-input" id="eName_'  + lead.id + '" value="' + escapeAttr(lead.ownerName  || '') + '" placeholder="Owner name..." />'
         : (lead.ownerName  ? '<span class="text-slate-300">' + escapeHtml(lead.ownerName) + '</span>' : dash);
     const ph = ed
         ? '<input class="owner-input" id="ePhone_' + lead.id + '" value="' + escapeAttr(lead.ownerPhone || '') + '" placeholder="(555) 000-0000" />'
@@ -262,6 +376,13 @@ function buildRow(lead) {
         ? '<td class="w-8"><input type="checkbox" class="row-checkbox accent-orange-500 w-4 h-4 cursor-pointer" data-id="' + lead.id + '" onchange="toggleRowSelect(this)" /></td>'
         : '';
 
+    // Notes button
+    const hasNotes = !!(lead.notes && lead.notes.trim());
+    const notesBtnCls = hasNotes
+        ? 'w-7 h-7 rounded-lg flex items-center justify-center bg-amber-500/15 hover:bg-amber-500/30 text-amber-400 border border-amber-500/30 transition'
+        : 'w-7 h-7 rounded-lg flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-slate-400 border border-slate-600 transition';
+    const notesBtn = '<button onclick="openNotes(' + lead.id + ')" class="' + notesBtnCls + '" title="' + (hasNotes ? escapeAttr(lead.notes.slice(0,80)) : 'Add notes') + '"><i class="fa-solid fa-note-sticky text-xs"></i></button>';
+
     // Action buttons
     let ac;
     if (ed) {
@@ -272,16 +393,80 @@ function buildRow(lead) {
         ac = '<div class="flex items-center justify-center gap-1">' +
              '<button onclick="enrichLead(' + lead.id + ', this)" class="w-7 h-7 rounded-lg flex items-center justify-center bg-orange-500/10 hover:bg-orange-500/30 text-orange-400 border border-orange-500/20 transition" title="Enrich"><i class="fa-solid fa-bolt text-xs"></i></button>' +
              '<button onclick="startEdit(' + lead.id + ')" class="w-7 h-7 rounded-lg flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-brand border border-slate-600 transition" title="Edit owner"><i class="fa-solid fa-pen text-xs"></i></button>' +
+             notesBtn +
              '<button onclick="archiveLead(' + lead.id + ', this)" class="w-7 h-7 rounded-lg flex items-center justify-center bg-slate-600/40 hover:bg-slate-600 text-slate-400 border border-slate-600 transition" title="Archive"><i class="fa-solid fa-box-archive text-xs"></i></button></div>';
-    } else if (activeTab === 'enriched') {
+    } else if (activeTab === 'pipeline' || activeTab === 'closed') {
+        const hasContacts = (lead.contacts && lead.contacts.length > 0);
+        const contactsOpen = viewingContactsId === lead.id;
+        const cCount = hasContacts ? lead.contacts.length : 0;
+        const contactsBtnCls = hasContacts
+            ? (contactsOpen
+                ? 'rounded-lg flex items-center justify-center gap-1 px-1.5 h-7 bg-sky-500/30 text-sky-300 border border-sky-500/50 transition text-xs'
+                : 'rounded-lg flex items-center justify-center gap-1 px-1.5 h-7 bg-sky-500/10 hover:bg-sky-500/25 text-sky-400 border border-sky-500/20 transition text-xs')
+            : null;
+        const contactsBtn = hasContacts
+            ? '<button onclick="toggleContacts(' + lead.id + ')" class="' + contactsBtnCls + '" title="View ' + cCount + ' contact' + (cCount !== 1 ? 's' : '') + '"><i class="fa-solid fa-users"></i>' + (cCount > 1 ? '<span>' + cCount + '</span>' : '') + '</button>'
+            : '';
         ac = '<div class="flex items-center justify-center gap-1">' +
              '<button onclick="startEdit(' + lead.id + ')" class="w-7 h-7 rounded-lg flex items-center justify-center bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-brand border border-slate-600 transition" title="Edit owner"><i class="fa-solid fa-pen text-xs"></i></button>' +
+             notesBtn + contactsBtn +
              '<span class="w-7 h-7 flex items-center justify-center" title="Enriched leads are protected"><i class="fa-solid fa-shield-halved text-xs text-slate-600"></i></span></div>';
     } else {
-        // Archived tab — restore only
+        // Archived tab
         ac = '<div class="flex items-center justify-center gap-1">' +
-             '<button onclick="restoreLead(' + lead.id + ', this)" class="w-7 h-7 rounded-lg flex items-center justify-center bg-green-500/10 hover:bg-green-500/30 text-green-400 border border-green-500/20 transition" title="Restore to active"><i class="fa-solid fa-rotate-left text-xs"></i></button></div>';
+             '<button onclick="restoreLead(' + lead.id + ', this)" class="w-7 h-7 rounded-lg flex items-center justify-center bg-green-500/10 hover:bg-green-500/30 text-green-400 border border-green-500/20 transition" title="Restore to active"><i class="fa-solid fa-rotate-left text-xs"></i></button>' +
+             notesBtn + '</div>';
     }
+
+    // Status cell
+    const statusCell = activeTab !== 'archived'
+        ? '<td class="hidden lg:table-cell">' + buildStatusDropdown(lead) + '</td>'
+        : '<td class="hidden lg:table-cell"><span class="text-xs text-slate-600 italic">archived</span></td>';
+
+    // Contacts expansion row (below the main row, enriched tab only)
+    let contactsExpRow = '';
+    if (viewingContactsId === lead.id && lead.contacts && lead.contacts.length > 0) {
+        var ctRows = lead.contacts.map(function(c) {
+            var phoneHtml = c.phone
+                ? '<a href="tel:' + escapeAttr(c.phone) + '" class="text-sky-400 hover:text-sky-300">' + escapeHtml(c.phone) + '</a>'
+                : '<span class="text-slate-600 italic text-xs">—</span>';
+            var emailHtml = c.email
+                ? '<a href="mailto:' + escapeAttr(c.email) + '" class="text-sky-400 hover:text-sky-300 truncate">' + escapeHtml(c.email) + '</a>'
+                : '<span class="text-slate-600 italic text-xs">—</span>';
+            var typeBadge = c.contactType === 'owner'
+                ? '<span class="px-1.5 py-0.5 rounded-full text-xs font-semibold bg-orange-500/15 text-orange-400 border border-orange-500/20">owner</span>'
+                : '<span class="px-1.5 py-0.5 rounded-full text-xs font-semibold bg-slate-700 text-slate-400 border border-slate-600">resident</span>';
+            var primaryDot = c.isPrimary
+                ? '<span class="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-green-400" title="Primary contact"></span>'
+                : '';
+            return '<div class="flex items-center gap-3 py-1.5 border-b border-slate-700/50 last:border-0">' +
+                   '<div class="w-32 shrink-0 flex items-center gap-1">' + typeBadge + primaryDot + '</div>' +
+                   '<div class="w-36 shrink-0 text-slate-300 text-sm truncate">' + (c.name ? escapeHtml(c.name) : '<span class="text-slate-600 italic text-xs">—</span>') + '</div>' +
+                   '<div class="w-36 shrink-0 text-sm">' + phoneHtml + '</div>' +
+                   '<div class="min-w-0 text-sm">' + emailHtml + '</div>' +
+                   '</div>';
+        }).join('');
+        contactsExpRow = '<tr class="notes-row" data-contacts-for="' + lead.id + '">' +
+            '<td colspan="11" class="notes-row-cell">' +
+            '<div class="flex items-center justify-between mb-2">' +
+            '<span class="text-xs font-semibold text-sky-400 uppercase tracking-wide"><i class="fa-solid fa-users mr-1.5"></i>Contacts (' + lead.contacts.length + ')</span>' +
+            '<button onclick="toggleContacts(' + lead.id + ')" class="text-xs text-slate-500 hover:text-slate-300 transition"><i class="fa-solid fa-xmark"></i></button>' +
+            '</div>' + ctRows + '</td></tr>';
+    }
+
+    // Notes expansion row (below the main row)
+    const notesExpRow = editingNotesId === lead.id
+        ? '<tr class="notes-row" data-notes-for="' + lead.id + '">' +
+          '<td colspan="11" class="notes-row-cell">' +
+          '<div class="flex items-start gap-2">' +
+          '<textarea id="notesArea_' + lead.id + '" class="notes-textarea" rows="2" placeholder="Add notes about this lead..." ' +
+          'onkeydown="if(event.key===\'Escape\'){closeNotes();}else if((event.metaKey||event.ctrlKey)&&event.key===\'Enter\'){saveNotes(' + lead.id + ');}">' +
+          escapeHtml(lead.notes || '') +
+          '</textarea>' +
+          '<button onclick="saveNotes(' + lead.id + ')" class="flex-shrink-0 mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center bg-green-500/20 hover:bg-green-500/40 text-green-400 border border-green-500/30 transition" title="Save (Ctrl+Enter)"><i class="fa-solid fa-check text-xs"></i></button>' +
+          '<button onclick="closeNotes()" class="flex-shrink-0 mt-0.5 w-7 h-7 rounded-lg flex items-center justify-center bg-slate-600/40 hover:bg-slate-600 text-slate-400 border border-slate-600 transition" title="Cancel (Esc)"><i class="fa-solid fa-xmark text-xs"></i></button>' +
+          '</div></td></tr>'
+        : '';
 
     return '<tr data-lead-id="' + lead.id + '" class="' + (ed ? 'editing' : '') + '">' +
         cbCell +
@@ -294,11 +479,13 @@ function buildRow(lead) {
         '<td class="hidden md:table-cell whitespace-nowrap">' + escapeHtml(lead.lastStormDate) + '</td>' +
         '<td class="hidden lg:table-cell whitespace-nowrap">' + (lead.yearBuilt ? lead.yearBuilt : '<span class="text-slate-600 italic text-xs">—</span>') + '</td>' +
         '<td class="hidden xl:table-cell">' + em + '</td>' +
-        '<td class="sticky-actions">' + ac + '</td></tr>';
+        statusCell +
+        '<td class="sticky-actions">' + ac + '</td></tr>' +
+        contactsExpRow + notesExpRow;
 }
 
 // ── Row actions ───────────────────────────────────────────────────
-function startEdit(id) { editingId = id; renderTable(); var i = document.getElementById('eName_' + id); if (i) i.focus(); }
+function startEdit(id) { editingNotesId = null; editingId = id; renderTable(); var i = document.getElementById('eName_' + id); if (i) i.focus(); }
 function cancelEdit()  { editingId = null; renderTable(); }
 
 async function saveOwner(id) {
@@ -356,7 +543,9 @@ async function enrichLead(id, btn) {
             // Lead is now enriched — remove from unenriched list
             allLeads = allLeads.filter(function(l) { return l.id !== id; });
             selectedIds.delete(id);
-            var found = [r.ownerName, r.yearBuilt ? 'built ' + r.yearBuilt : null].filter(Boolean).join(' · ');
+            var contactCount = (r.contacts && r.contacts.length) ? r.contacts.length : 0;
+            var contactBit = contactCount > 1 ? contactCount + ' contacts' : (r.ownerPhone || r.ownerEmail ? '1 contact' : null);
+            var found = [r.ownerName, r.yearBuilt ? 'built ' + r.yearBuilt : null, contactBit].filter(Boolean).join(' · ');
             showToast(found ? 'Found: ' + found : 'Parcel found — no additional data', true);
             updateTabCounts(); renderTable(); refreshTabCounts();
         } else {
@@ -371,13 +560,40 @@ async function enrichLead(id, btn) {
 
 // ── Export ────────────────────────────────────────────────────────
 function exportCSV() {
-    var cols   = ['address','riskLevel','hailSize','lastStormDate','yearBuilt','ownerName','ownerPhone','ownerEmail','sourceAddress','savedAt'];
-    var header = ['Address','Risk Level','Hail Size','Last Storm Date','Year Built','Owner Name','Owner Phone','Owner Email','Source Address','Saved At'];
-    var csv = [header.join(',')].concat(allLeads.map(function(l) {
-        return cols.map(function(c) { return '"' + (l[c] || '').toString().replace(/"/g,'""') + '"'; }).join(',');
-    })).join('\n');
+    var header = ['Address','Risk Level','Hail Size','Last Storm Date','Year Built',
+                  'Contact Name','Phone','Email','Contact Type','Is Primary',
+                  'Status','Notes','Source Address','Saved At'];
+
+    function q(v) { return '"' + (v || '').toString().replace(/"/g,'""') + '"'; }
+
+    var rows = [header.join(',')];
+
+    allLeads.forEach(function(l) {
+        var base = [q(l.address), q(l.riskLevel), q(l.hailSize), q(l.lastStormDate),
+                    q(l.yearBuilt)];
+        var tail = [q(l.status), q(l.notes), q(l.sourceAddress), q(l.savedAt)];
+
+        var contacts = (l.contacts && l.contacts.length > 0) ? l.contacts : null;
+
+        if (contacts) {
+            // One row per contact (Option A)
+            contacts.forEach(function(c) {
+                rows.push(base.concat([
+                    q(c.name), q(c.phone), q(c.email),
+                    q(c.contactType), q(c.isPrimary ? 'Yes' : 'No')
+                ]).concat(tail).join(','));
+            });
+        } else {
+            // No contacts yet — use legacy owner fields, one row
+            rows.push(base.concat([
+                q(l.ownerName), q(l.ownerPhone), q(l.ownerEmail),
+                q('owner'), q('Yes')
+            ]).concat(tail).join(','));
+        }
+    });
+
     var a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
+    a.href = URL.createObjectURL(new Blob([rows.join('\n')], { type:'text/csv' }));
     a.download = 'StormLeads_' + new Date().toISOString().slice(0,10) + '.csv';
     a.click();
 }
@@ -402,12 +618,13 @@ function escapeAttr(s) { return escapeHtml(s); }
 function buildMobileCard(lead) {
     const rc = ({ High:'badge-high', Medium:'badge-medium', Low:'badge-low' }[lead.riskLevel]) || 'badge-low';
     const ed = editingId === lead.id;
+    const enotes = editingNotesId === lead.id;
 
     if (ed) {
         return '<div class="bg-slate-800 border border-brand/40 rounded-2xl p-4 shadow-md" data-lead-id="' + lead.id + '">' +
             '<p class="text-white font-semibold text-sm mb-3 truncate">' + escapeHtml(lead.address) + '</p>' +
             '<div class="space-y-2 mb-3">' +
-            '<input class="owner-input w-full" id="eName_'  + lead.id + '" value="' + escapeAttr(lead.ownerName  || '') + '" placeholder="Owner name…" />' +
+            '<input class="owner-input w-full" id="eName_'  + lead.id + '" value="' + escapeAttr(lead.ownerName  || '') + '" placeholder="Owner name" />' +
             '<input class="owner-input w-full" id="ePhone_' + lead.id + '" value="' + escapeAttr(lead.ownerPhone || '') + '" placeholder="(555) 000-0000" />' +
             '<input class="owner-input w-full" id="eEmail_' + lead.id + '" value="' + escapeAttr(lead.ownerEmail || '') + '" placeholder="owner@example.com" />' +
             '</div>' +
@@ -421,7 +638,7 @@ function buildMobileCard(lead) {
         ? '<a href="tel:' + escapeAttr(lead.ownerPhone) + '" class="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-green-500/15 border border-green-500/30 text-green-400 text-sm font-semibold active:bg-green-500/30 transition"><i class="fa-solid fa-phone"></i>' + escapeHtml(lead.ownerPhone) + '</a>'
         : '<span class="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-slate-700/40 border border-slate-600/60 text-slate-500 text-sm"><i class="fa-solid fa-phone-slash"></i>No phone yet</span>';
 
-    const hailBit = (lead.hailSize && lead.hailSize !== 'No data') ? '<span><i class="fa-solid fa-cloud-bolt mr-1 text-orange-400"></i>' + escapeHtml(lead.hailSize) + '"</span>' : '';
+    const hailBit = (lead.hailSize && lead.hailSize !== 'No data') ? '<span><i class="fa-solid fa-cloud-bolt mr-1 text-orange-400"></i>' + escapeHtml(lead.hailSize) + '</span>' : '';
     const dateBit = (lead.lastStormDate && lead.lastStormDate !== 'No data') ? '<span><i class="fa-solid fa-calendar mr-1 text-slate-500"></i>' + escapeHtml(lead.lastStormDate) + '</span>' : '';
     const yearBit = lead.yearBuilt ? '<span><i class="fa-solid fa-house mr-1 text-slate-500"></i>Built ' + lead.yearBuilt + '</span>' : '';
 
@@ -431,11 +648,34 @@ function buildMobileCard(lead) {
         ? '<button onclick="enrichLead(' + lead.id + ', this)" class="flex-1 py-2 rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-400 text-xs font-semibold hover:bg-orange-500/20 active:bg-orange-500/30 transition"><i class="fa-solid fa-bolt mr-1"></i>Enrich</button>' +
           '<button onclick="startEdit(' + lead.id + ')" class="flex-1 py-2 rounded-xl bg-slate-700 border border-slate-600 text-slate-300 text-xs font-semibold hover:bg-slate-600 transition"><i class="fa-solid fa-pen mr-1"></i>Edit</button>' +
           '<button onclick="archiveLead(' + lead.id + ', this)" class="py-2 px-3.5 rounded-xl bg-slate-600/40 border border-slate-600 text-slate-400 text-xs font-semibold hover:bg-slate-600 transition"><i class="fa-solid fa-box-archive"></i></button>'
-        : activeTab === 'enriched'
+        : (activeTab === 'pipeline' || activeTab === 'closed')
         ? '<button onclick="startEdit(' + lead.id + ')" class="flex-1 py-2 rounded-xl bg-slate-700 border border-slate-600 text-slate-300 text-xs font-semibold hover:bg-slate-600 transition"><i class="fa-solid fa-pen mr-1"></i>Edit</button>'
         : '<button onclick="restoreLead(' + lead.id + ', this)" class="flex-1 py-2 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 text-xs font-semibold hover:bg-green-500/20 transition"><i class="fa-solid fa-rotate-left mr-1"></i>Restore</button>';
 
-    return '<div class="bg-slate-800 border border-slate-700/60 rounded-2xl p-4 shadow-md" data-lead-id="' + lead.id + '">' +
+    // Status select (not shown on archived tab)
+    const statusRow = activeTab !== 'archived'
+        ? '<div class="flex items-center justify-between mt-3 pt-3 border-t border-slate-700/60">' +
+          '<span class="text-xs text-slate-500 font-semibold uppercase tracking-wide">Pipeline</span>' +
+          buildStatusDropdown(lead) +
+          '</div>'
+        : '';
+
+    // Notes section
+    const hasNotes = !!(lead.notes && lead.notes.trim());
+    const notesSection = enotes
+        ? '<div class="mt-3 pt-3 border-t border-slate-700/60 space-y-2">' +
+          '<textarea id="notesArea_' + lead.id + '" class="notes-textarea w-full" rows="3" placeholder="Add notes about this lead"></textarea>' +
+          '<div class="flex gap-2">' +
+          '<button onclick="saveNotes(' + lead.id + ')" class="flex-1 py-2 rounded-xl bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-semibold hover:bg-green-500/30 transition"><i class="fa-solid fa-check mr-1"></i>Save Note</button>' +
+          '<button onclick="closeNotes()" class="py-2 px-3.5 rounded-xl bg-slate-700 border border-slate-600 text-slate-300 text-xs font-semibold hover:bg-slate-600 transition"><i class="fa-solid fa-xmark"></i></button>' +
+          '</div></div>'
+        : '<div class="mt-3 pt-3 border-t border-slate-700/60">' +
+          (hasNotes ? '<p class="text-xs text-slate-400 mb-2 leading-relaxed"><i class="fa-solid fa-note-sticky mr-1.5 text-amber-400"></i>' + escapeHtml(lead.notes.slice(0,100)) + (lead.notes.length > 100 ? '...' : '') + '</p>' : '') +
+          '<button onclick="openNotes(' + lead.id + ')" class="w-full py-2 rounded-xl bg-slate-700/60 border border-slate-600/60 text-xs font-semibold hover:bg-slate-700 transition ' + (hasNotes ? 'text-amber-400' : 'text-slate-400') + '">' +
+          '<i class="fa-solid fa-note-sticky mr-1.5"></i>' + (hasNotes ? 'Edit Note' : 'Add Note') + '</button>' +
+          '</div>';
+
+    var cardHtml = '<div class="bg-slate-800 border border-slate-700/60 rounded-2xl p-4 shadow-md" data-lead-id="' + lead.id + '">' +
         '<div class="flex items-start justify-between gap-2 mb-1">' +
         '<div class="flex-1 min-w-0">' +
         '<p class="font-semibold text-white text-sm leading-tight">' + escapeHtml(lead.address) + '</p>' +
@@ -447,7 +687,11 @@ function buildMobileCard(lead) {
         '</div></div>' +
         ((hailBit || dateBit || yearBit) ? '<div class="flex items-center gap-3 text-xs text-slate-400 mb-3 mt-2 flex-wrap">' + hailBit + dateBit + yearBit + '</div>' : '<div class="mb-3"></div>') +
         '<div class="flex gap-2 mb-3">' + phoneHtml + '</div>' +
-        '<div class="flex items-center gap-2">' + actionBtns + '</div></div>';
+        '<div class="flex items-center gap-2">' + actionBtns + '</div>' +
+        statusRow +
+        notesSection +
+        '</div>';
+    return cardHtml;
 }
 
 // ── Mobile nav ────────────────────────────────────────────────────
@@ -459,15 +703,4 @@ function toggleMobileMenu() {
     icon.className = nowHidden ? 'fa-solid fa-bars text-lg' : 'fa-solid fa-xmark text-lg';
 }
 
-// ── Toast ─────────────────────────────────────────────────────────
-var _toastTimer = null;
-function showToast(msg, success) {
-    var toast = document.getElementById('toast');
-    if (_toastTimer) clearTimeout(_toastTimer);
-    toast.className = success ? 'success' : 'error';
-    document.getElementById('toastIcon').className = 'fa-solid ' + (success ? 'fa-circle-check' : 'fa-circle-xmark');
-    document.getElementById('toastMsg').textContent = msg;
-    toast.offsetHeight;
-    toast.classList.add('show');
-    _toastTimer = setTimeout(function() { toast.classList.remove('show'); }, 3500);
-}
+// ─

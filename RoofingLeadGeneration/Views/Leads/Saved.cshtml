@@ -153,11 +153,17 @@
             Needs Enrichment
             <span id="tabUnenrichedCount" class="px-2 py-0.5 rounded-full bg-slate-700/80 text-xs font-bold text-slate-300"></span>
         </button>
-        <button id="tabEnriched" onclick="switchLeadTab('enriched')"
+        <button id="tabPipeline" onclick="switchLeadTab('pipeline')"
             class="lead-tab flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all">
-            <i class="fa-solid fa-circle-check text-green-400"></i>
-            Enriched
-            <span id="tabEnrichedCount" class="px-2 py-0.5 rounded-full bg-slate-700/80 text-xs font-bold text-slate-300"></span>
+            <i class="fa-solid fa-filter text-sky-400"></i>
+            Pipeline
+            <span id="tabPipelineCount" class="px-2 py-0.5 rounded-full bg-slate-700/80 text-xs font-bold text-slate-300"></span>
+        </button>
+        <button id="tabClosed" onclick="switchLeadTab('closed')"
+            class="lead-tab flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all">
+            <i class="fa-solid fa-flag-checkered text-slate-400"></i>
+            Closed
+            <span id="tabClosedCount" class="px-2 py-0.5 rounded-full bg-slate-700/80 text-xs font-bold text-slate-300"></span>
         </button>
         <button id="tabArchived" onclick="switchLeadTab('archived')"
             class="lead-tab flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all">
@@ -244,7 +250,8 @@
                         <th onclick="sortBy('lastStormDate')"    class="text-left hidden md:table-cell" style="min-width:100px"><span class="sort-icon">Storm Date</span></th>
                         <th onclick="sortBy('yearBuilt')"        class="text-left hidden lg:table-cell" style="min-width:75px"><span class="sort-icon">Year Built</span></th>
                         <th onclick="sortBy('ownerEmail')"       class="text-left hidden xl:table-cell" style="min-width:150px"><span class="sort-icon">Email</span></th>
-                        <th class="text-center sticky-actions" style="cursor:default; min-width:110px">Actions</th>
+                        <th onclick="sortBy('status')"           class="text-left hidden lg:table-cell" style="min-width:130px"><span class="sort-icon">Status</span></th>
+                        <th class="text-center sticky-actions"   style="cursor:default; min-width:126px">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="leadsBody"></tbody>

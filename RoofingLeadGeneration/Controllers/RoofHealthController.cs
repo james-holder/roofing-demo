@@ -10,14 +10,17 @@ namespace RoofingLeadGeneration.Controllers
     [Route("[controller]")]
     public class RoofHealthController : Controller
     {
-        private readonly RealDataService _realData;
-        private readonly string          _apiKey;
+        private readonly RealDataService              _realData;
+        private readonly string                       _apiKey;
+        private readonly ILogger<RoofHealthController> _logger;
 
         private const string GeocodingBase = "https://maps.googleapis.com/maps/api/geocode/json";
 
-        public RoofHealthController(RealDataService realData, IConfiguration config)
+        public RoofHealthController(RealDataService realData, IConfiguration config,
+                                    ILogger<RoofHealthController> logger)
         {
             _realData = realData;
+            _logger   = logger;
             _apiKey   = config["GoogleMaps:ApiKey"] ?? throw new InvalidOperationException(
                 "GoogleMaps:ApiKey is not configured in appsettings.json");
         }
@@ -86,50 +89,57 @@ namespace RoofingLeadGeneration.Controllers
             }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         }
 
-        [HttpGet("HailDebug")]
-        public async Task<IActionResult> HailDebug(double lat = 32.54, double lng = -96.86)
+        // ─────────────────────────────────────────────────────────────────
+        // GET /RoofHealth/LsrDebug?lat=32.54&lng=-96.86
+        // Tests the Iowa State Mesonet LSR hail data directly
+        // ─────────────────────────────────────────────────────────────────
+        [HttpGet("LsrDebug")]
+        public async Task<IActionResult> LsrDebug(double lat = 32.54, double lng = -96.86, string state = "TX")
         {
-            double hailMiles = 5.0;
-            double span      = hailMiles / 69.0;
-            double west      = Math.Round(lng - span, 4);
-            double east      = Math.Round(lng + span, 4);
-            double south     = Math.Round(lat - span, 4);
-            double north     = Math.Round(lat + span, 4);
-
-            // Test two windows: spring 2025 (peak TX hail season) + most recent valid period
-            var recentEnd   = DateTime.UtcNow.AddDays(-121);
-            var recentStart = recentEnd.AddDays(-30);
-            var springStart = new DateTime(2025, 4, 1);
-            var springEnd   = new DateTime(2025, 4, 30);
-            var start = recentStart; // keep for dateRange display
-            var end   = recentEnd;
-
-            var urls = new[]
+            var events = await _realData.GetMesonetLsrHailAsync(lat, lng, 5.0, state);
+            return Json(new
             {
-                $"https://www.ncei.noaa.gov/swdiws/json/nx3hail/{springStart:yyyyMMdd}:{springEnd:yyyyMMdd}?bbox={west},{south},{east},{north}",
-                $"https://www.ncei.noaa.gov/swdiws/json/nx3hail/{recentStart:yyyyMMdd}:{recentEnd:yyyyMMdd}?bbox={west},{south},{east},{north}"
-            };
+                count       = events.Count,
+                sample      = events.Take(10).Select(e => new
+                {
+                    e.Lat, e.Lng, e.SizeInches,
+                    date   = e.Date.ToString("yyyy-MM-dd"),
+                    source = e.Source
+                })
+            }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
 
-            using var client = new HttpClient();
-            client.DefaultRequestHeaders.Add("User-Agent", "StormLeadPro/1.0");
-            client.Timeout = TimeSpan.FromSeconds(30);
+        [HttpGet("HailDebug")]
+        public async Task<IActionResult> HailDebug(double lat = 32.54, double lng = -96.86, string state = "TX")
+        {
+            var swdiEvents    = await SafeSwdi(lat, lng, 5.0);
+            var lsrEvents     = await SafeLsr(lat, lng, 5.0, state);
 
-            var results = new List<object>();
-            foreach (var url in urls)
+            // Also probe a single raw SWDI URL so we can see what the API actually returns
+            double span  = 5.0 / 69.0;
+            var probeUrl = $"https://www.ncei.noaa.gov/swdiws/json/nx3hail" +
+                           $"/{DateTime.UtcNow.AddDays(-121).AddDays(-30):yyyyMMdd}" +
+                           $":{DateTime.UtcNow.AddDays(-121):yyyyMMdd}" +
+                           $"?bbox={Math.Round(lng-span,4)},{Math.Round(lat-span,4)}" +
+                           $",{Math.Round(lng+span,4)},{Math.Round(lat+span,4)}";
+
+            string probeBody = "";
+            try
             {
-                try
-                {
-                    var resp = await client.GetAsync(url);
-                    var body = await resp.Content.ReadAsStringAsync();
-                    results.Add(new { url, status = (int)resp.StatusCode, bodyPreview = body.Length > 500 ? body[..500] : body, totalLength = body.Length });
-                }
-                catch (Exception ex)
-                {
-                    results.Add(new { url, error = ex.Message });
-                }
+                using var c = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                c.DefaultRequestHeaders.Add("User-Agent", "StormLeadPro/1.0");
+                var r = await c.GetAsync(probeUrl);
+                probeBody = await r.Content.ReadAsStringAsync();
+                probeBody = probeBody.Length > 400 ? probeBody[..400] : probeBody;
             }
+            catch (Exception ex) { probeBody = ex.Message; }
 
-            return Json(new { bbox = new { west, south, east, north }, dateRange = new { start, end }, results });
+            return Json(new
+            {
+                swdi    = new { count = swdiEvents.Count,  sample = swdiEvents.Take(3).Select(e => new { e.Lat, e.Lng, e.SizeInches, date = e.Date.ToString("yyyy-MM-dd") }) },
+                lsr     = new { count = lsrEvents.Count,   sample = lsrEvents.Take(3).Select(e  => new { e.Lat, e.Lng, e.SizeInches, date = e.Date.ToString("yyyy-MM-dd") }) },
+                rawSwdiProbe = new { url = probeUrl, bodyPreview = probeBody }
+            }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -189,13 +199,20 @@ namespace RoofingLeadGeneration.Controllers
             var (properties, _) = await GetPropertiesAsync(address, lat, lng, radius, exportState);
 
             var sb = new StringBuilder();
-            sb.AppendLine("Address,Latitude,Longitude,Risk Level,Last Storm Date,Hail Size,Data Source");
+            sb.AppendLine("Address,Latitude,Longitude,Risk Level,Last Storm Date,Hail Size,Data Source,Claim Window,Days Since Storm");
 
             foreach (var p in properties)
             {
+                var claimLabel = p.ClaimWindowTier switch
+                {
+                    "hot"      => "Hot — File Now",
+                    "fileable" => "Still Fileable",
+                    "expired"  => "Expired",
+                    _          => ""
+                };
                 sb.AppendLine(
                     $"\"{p.Address}\",{p.Lat},{p.Lng},\"{p.RiskLevel}\",\"{p.LastStormDate}\"," +
-                    $"\"{p.HailSize}\",\"{p.DataSource}\"");
+                    $"\"{p.HailSize}\",\"{p.DataSource}\",\"{claimLabel}\",\"{p.ClaimWindowDays}\"");
             }
 
             var bytes    = Encoding.UTF8.GetBytes(sb.ToString());
@@ -208,33 +225,63 @@ namespace RoofingLeadGeneration.Controllers
         //   Real OSM addresses + real NOAA hail data only.
         //   Returns whatever OSM finds — no simulated fallback.
         // ─────────────────────────────────────────────────────────────────
+        // Safe wrappers — a failure in one data source must never kill the whole request
+        private async Task<List<RealDataService.HailEvent>> SafeSwdi(double lat, double lng, double r)
+        {
+            try   { return await _realData.GetSwdiHailEventsAsync(lat, lng, r); }
+            catch (Exception ex) { _logger.LogError(ex, "SWDI fetch failed"); return new(); }
+        }
+        private async Task<List<RealDataService.HailEvent>> SafeLsr(double lat, double lng, double r, string state)
+        {
+            try   { return await _realData.GetMesonetLsrHailAsync(lat, lng, r, state); }
+            catch (Exception ex) { _logger.LogError(ex, "Mesonet LSR fetch failed"); return new(); }
+        }
+        private async Task<List<RealDataService.OsmAddress>> SafeOsm(double lat, double lng, double r)
+        {
+            try   { return await _realData.GetNearbyAddressesAsync(lat, lng, r); }
+            catch (Exception ex) { _logger.LogError(ex, "OSM fetch failed"); return new(); }
+        }
+
         private async Task<(List<PropertyRecord> Records, int HailEventCount)> GetPropertiesAsync(
             string centerAddress, double centerLat, double centerLng, double radiusMiles,
             string stateAbbr = "")
         {
-            // Run OSM and NOAA in parallel — NOAA failure must never kill OSM results
-            var osmTask  = _realData.GetNearbyAddressesAsync(centerLat, centerLng, radiusMiles);
-            var hailTask = _realData.GetSwdiHailEventsAsync(centerLat, centerLng, radiusMiles)
-                               .ContinueWith(t =>
-                               {
-                                   if (t.IsFaulted)
-                                       return new List<RealDataService.HailEvent>();
-                                   return t.Result;
-                               });
-            await Task.WhenAll(osmTask, hailTask);
+            // If stateAbbr wasn't set by geocoding (lat/lng came from autocomplete),
+            // try to extract it from the address string — e.g. "Dallas, TX 75201"
+            if (string.IsNullOrWhiteSpace(stateAbbr))
+            {
+                var m = System.Text.RegularExpressions.Regex.Match(
+                    centerAddress, @"\b([A-Z]{2})\b\s*\d{5}");
+                if (m.Success) stateAbbr = m.Groups[1].Value;
+            }
+
+            // Run OSM, SWDI, and Mesonet LSR fully in parallel — each wrapped so
+            // a failure in one source never blocks the others.
+            var osmTask     = SafeOsm(centerLat, centerLng, radiusMiles);
+            var swdiTask    = SafeSwdi(centerLat, centerLng, radiusMiles);
+            var mesonetTask = SafeLsr(centerLat, centerLng, radiusMiles, stateAbbr);
+
+            await Task.WhenAll(osmTask, swdiTask, mesonetTask);
 
             var osmAddresses = osmTask.Result;
-            var hailEvents   = hailTask.Result;
+
+            // Merge all hail sources — LSR events tagged Source="lsr"
+            var hailEvents = new List<RealDataService.HailEvent>();
+            hailEvents.AddRange(swdiTask.Result);
+            hailEvents.AddRange(mesonetTask.Result);
 
             // Fallback: if OSM returned nothing (common in newer suburbs), use Google reverse-geocode grid
             if (osmAddresses.Count == 0)
                 osmAddresses = await _realData.GetAddressesViaGoogleGridAsync(
                     centerLat, centerLng, radiusMiles, _apiKey);
 
-            // Fallback: if SWDI returned nothing, try NOAA Storm Events (ground-truth reports)
+            // Fallback: if no hail data at all, try NOAA Storm Events (ground-truth reports)
             if (hailEvents.Count == 0 && !string.IsNullOrEmpty(stateAbbr))
-                hailEvents = await _realData.GetStormEventsHailAsync(
+            {
+                var stormEvents = await _realData.GetStormEventsHailAsync(
                     centerLat, centerLng, radiusMiles, stateAbbr);
+                hailEvents.AddRange(stormEvents);
+            }
 
             var rng = new Random(centerAddress.GetHashCode());
             var records = osmAddresses
@@ -261,35 +308,42 @@ namespace RoofingLeadGeneration.Controllers
             RealDataService.OsmAddress addr,
             List<RealDataService.HailEvent> hailEvents)
         {
-            var (risk, hailSize, stormDate, dataSource) = ComputeRiskFromHail(
+            var (risk, hailSize, stormDate, dataSource, claimDays, claimTier) = ComputeRiskFromHail(
                 addr.Lat, addr.Lng, hailEvents);
 
             return new PropertyRecord
             {
-                Address       = addr.FullAddress,
-                Lat           = Math.Round(addr.Lat, 6),
-                Lng           = Math.Round(addr.Lng, 6),
-                RiskLevel     = risk,
-                LastStormDate = stormDate,
-                HailSize      = hailSize,
-                DataSource    = dataSource
+                Address         = addr.FullAddress,
+                Lat             = Math.Round(addr.Lat, 6),
+                Lng             = Math.Round(addr.Lng, 6),
+                RiskLevel       = risk,
+                LastStormDate   = stormDate,
+                HailSize        = hailSize,
+                DataSource      = dataSource,
+                ClaimWindowDays = claimDays,
+                ClaimWindowTier = claimTier
             };
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // Map real hail events → risk / hail size / last storm date
+        // Map real hail events → risk / hail size / last storm date / claim window
         //   - High   if any event ≥ 1.50" within 2 miles
         //   - Medium if any event ≥ 0.75" within 2 miles
         //   - Low    if events exist but below threshold
-        //   - No data if NOAA has no events for this area
+        //   - No data if no events for this area
+        //
+        //   Claim window tiers (Texas 2-year statute of limitations):
+        //   - "hot"      : 0–365 days since last storm  (prime time, file now!)
+        //   - "fileable" : 366–730 days                 (still within 2-yr window)
+        //   - "expired"  : > 730 days                   (past filing window)
         // ─────────────────────────────────────────────────────────────────
-        private static (string risk, string hailSize, string stormDate, string dataSource)
+        private static (string risk, string hailSize, string stormDate, string dataSource, int? claimDays, string claimTier)
             ComputeRiskFromHail(
                 double lat, double lng,
                 List<RealDataService.HailEvent> hailEvents)
         {
             if (hailEvents.Count == 0)
-                return ("Low", "No data", "No data", "none");
+                return ("Low", "No data", "No data", "none", null, "");
 
             var nearby = hailEvents
                 .Select(h => new
@@ -298,23 +352,35 @@ namespace RoofingLeadGeneration.Controllers
                     dist = RealDataService.HaversineDistanceMiles(lat, lng, h.Lat, h.Lng)
                 })
                 .Where(x => x.dist <= 2.0)
-                .OrderByDescending(x => x.h.SizeInches)
-                .ThenBy(x => x.dist)
                 .ToList();
 
             if (nearby.Count == 0)
-                return ("Low", "No data", "No data", "none");
+                return ("Low", "No data", "No data", "none", null, "");
 
-            var best = nearby.First();
+            // For risk/hail size: pick the largest nearby event
+            var best = nearby.OrderByDescending(x => x.h.SizeInches).ThenBy(x => x.dist).First();
 
             string risk = best.h.SizeInches >= 1.50 ? "High"
                         : best.h.SizeInches >= 0.75 ? "Medium"
                         : "Low";
 
             string hailSize  = $"{best.h.SizeInches:F2} inch";
-            string stormDate = best.h.Date.ToString("yyyy-MM-dd");
 
-            return (risk, hailSize, stormDate, "noaa");
+            // For claim window: use the MOST RECENT event within 2 miles
+            var mostRecent = nearby.OrderByDescending(x => x.h.Date).First();
+            string stormDate = mostRecent.h.Date.ToString("yyyy-MM-dd");
+
+            // Source label — prefer LSR (ground truth) > noaa
+            bool hasLsr  = nearby.Any(x => x.h.Source == "lsr");
+            string source = hasLsr ? "lsr+noaa" : "noaa";
+
+            // Claim window calculation
+            int daysSince = (int)(DateTime.UtcNow - mostRecent.h.Date).TotalDays;
+            string claimTier = daysSince <= 365 ? "hot"
+                             : daysSince <= 730 ? "fileable"
+                             : "expired";
+
+            return (risk, hailSize, stormDate, source, daysSince, claimTier);
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -386,13 +452,17 @@ namespace RoofingLeadGeneration.Controllers
 
         private class PropertyRecord
         {
-            [JsonPropertyName("address")]         public string Address         { get; set; } = "";
-            [JsonPropertyName("lat")]             public double Lat             { get; set; }
-            [JsonPropertyName("lng")]             public double Lng             { get; set; }
-            [JsonPropertyName("riskLevel")]       public string RiskLevel       { get; set; } = "";
-            [JsonPropertyName("lastStormDate")]   public string LastStormDate   { get; set; } = "";
-            [JsonPropertyName("hailSize")]        public string HailSize        { get; set; } = "";
-            [JsonPropertyName("dataSource")]      public string DataSource      { get; set; } = "none";
+            [JsonPropertyName("address")]          public string Address          { get; set; } = "";
+            [JsonPropertyName("lat")]              public double Lat              { get; set; }
+            [JsonPropertyName("lng")]              public double Lng              { get; set; }
+            [JsonPropertyName("riskLevel")]        public string RiskLevel        { get; set; } = "";
+            [JsonPropertyName("lastStormDate")]    public string LastStormDate    { get; set; } = "";
+            [JsonPropertyName("hailSize")]         public string HailSize         { get; set; } = "";
+            [JsonPropertyName("dataSource")]       public string DataSource       { get; set; } = "none";
+            /// <summary>Days since most recent nearby hail event. Null = no data.</summary>
+            [JsonPropertyName("claimWindowDays")]  public int?   ClaimWindowDays  { get; set; }
+            /// <summary>"hot" (0-365), "fileable" (366-730), "expired" (>730), or "" (no data)</summary>
+            [JsonPropertyName("claimWindowTier")]  public string ClaimWindowTier  { get; set; } = "";
         }
     }
 }

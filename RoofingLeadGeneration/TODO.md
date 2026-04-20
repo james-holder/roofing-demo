@@ -20,6 +20,7 @@
 - [ ] **Team accounts** — let a roofing company add multiple reps, assign leads to specific team members, track who's working what territory.
 - [ ] **CSV import** — let users upload their own address lists and run NOAA hail scoring against them. Opens the door to roofers with existing canvassing lists.
 - [x] **Landing page** — hero, how-it-works, features, pricing tiers (Free/Pro/Agency), CTA. ✅
+- [ ] **Certified hail report (NWD/HailTrace)** — "Get Certified Report" button on enriched leads. NWD/HailTrace provide property-level certified hail certificates (~$5–15 each) that homeowners hand to their adjuster. Free data finds the lead; paid report closes the deal. Sell as a per-report add-on or include in Pro/Agency plan.
 
 ## ⚫ Priority 1.5 — Data Quality
 

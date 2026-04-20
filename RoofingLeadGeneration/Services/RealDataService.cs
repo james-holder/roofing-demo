@@ -136,7 +136,7 @@ out center;";
         //    Docs: https://www.ncei.noaa.gov/products/severe-weather-data-inventory
         //
         //    NOTE: The SWDI API has a 1-year limit per query. We make two calls
-        //    to cover the last 2 years of storm history.
+        //    to cover the last 5 years of storm history.
         // ─────────────────────────────────────────────────────────────────
         public async Task<List<HailEvent>> GetSwdiHailEventsAsync(
             double lat, double lng, double radiusMiles)
@@ -152,6 +152,8 @@ out center;";
 
             // SWDI max range = 744 hours (~31 days). Split the 2-year window into
             // 30-day chunks and fetch all in parallel.
+            // NOTE: Mesonet LSR covers the 5-year window for Texas — SWDI stays at 2yr
+            // to avoid NOAA rate-limiting (60 chunks vs 24 causes timeouts).
             var end   = DateTime.UtcNow.AddDays(-121);
             var start = end.AddYears(-2);
 
@@ -506,6 +508,144 @@ out center;";
         }
 
         // ─────────────────────────────────────────────────────────────────
+        // 2c. Iowa State Mesonet LSR  –  ground-truth hail spotter reports
+        //     No API key needed. Data typically 0–60 min lag (real-time capable).
+        //     LSR = Local Storm Reports filed by trained NWS storm spotters.
+        //     Covers the last 5 years. Complements SWDI radar data.
+        //     Docs: https://mesonet.agron.iastate.edu/lsr/
+        //     API:  https://mesonet.agron.iastate.edu/geojson/lsr.php
+        // ─────────────────────────────────────────────────────────────────
+        public async Task<List<HailEvent>> GetMesonetLsrHailAsync(
+            double lat, double lng, double radiusMiles, string stateAbbr = "")
+        {
+            // The Mesonet LSR API filters by state — no lat/lon proximity param supported.
+            // We filter by proximity ourselves in the parser (same pattern as Storm Events).
+            // Skip entirely if no state — would pull the entire US.
+            if (string.IsNullOrWhiteSpace(stateAbbr)) return new List<HailEvent>();
+
+            // Filter radius — use 3× the search radius to catch nearby events
+            double filterMiles = Math.Max(radiusMiles * 3, 10.0);
+
+            var endTime   = DateTime.UtcNow;
+            var startTime = endTime.AddYears(-5);
+
+            // Build year-sized windows to avoid timeouts
+            var windows = new List<(DateTime from, DateTime to)>();
+            var cursor  = startTime;
+            while (cursor < endTime)
+            {
+                var next = cursor.AddYears(1);
+                if (next > endTime) next = endTime;
+                windows.Add((cursor, next));
+                cursor = next;
+            }
+
+            var allEvents = new List<HailEvent>();
+
+            // Throttle to 3 concurrent
+            using var semaphore = new System.Threading.SemaphoreSlim(3);
+            var tasks = windows.Select(async w =>
+            {
+                await semaphore.WaitAsync();
+                try
+                {
+                    // YYYYMMDDHHII format (UTC) — filter by state + hail type H
+                    var sts = w.from.ToString("yyyyMMddHHmm");
+                    var ets = w.to.ToString("yyyyMMddHHmm");
+                    var url = $"https://mesonet.agron.iastate.edu/geojson/lsr.php" +
+                              $"?sts={sts}&ets={ets}" +
+                              $"&states={Uri.EscapeDataString(stateAbbr.ToUpper())}" +
+                              $"&type=H&fmt=geojson";
+
+                    using var client = _httpFactory.CreateClient("mesonet");
+                    var resp = await client.GetAsync(url);
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        _logger.LogWarning("Mesonet LSR returned {Status}", resp.StatusCode);
+                        return new List<HailEvent>();
+                    }
+                    var json = await resp.Content.ReadAsStringAsync();
+                    return ParseMesonetLsrGeoJson(json, lat, lng, filterMiles);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Mesonet LSR fetch failed");
+                    return new List<HailEvent>();
+                }
+                finally { semaphore.Release(); }
+            });
+
+            var batches = await Task.WhenAll(tasks);
+            allEvents.AddRange(batches.SelectMany(b => b));
+
+            _logger.LogInformation("Mesonet LSR returned {Count} hail events near {Lat},{Lng} in {State}",
+                allEvents.Count, lat, lng, stateAbbr);
+
+            return allEvents;
+        }
+
+        private static List<HailEvent> ParseMesonetLsrGeoJson(
+            string json, double centerLat, double centerLng, double filterMiles)
+        {
+            var results = new List<HailEvent>();
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                if (!root.TryGetProperty("features", out var features)) return results;
+
+                foreach (var feature in features.EnumerateArray())
+                {
+                    if (!feature.TryGetProperty("properties", out var props)) continue;
+
+                    // Filter to hail only — double-check typetext even with type=H filter
+                    if (props.TryGetProperty("typetext", out var tt))
+                    {
+                        var typeText = tt.GetString() ?? "";
+                        if (!typeText.Contains("HAIL", StringComparison.OrdinalIgnoreCase)) continue;
+                    }
+
+                    // Coordinates from geometry (GeoJSON: [lon, lat])
+                    if (!feature.TryGetProperty("geometry", out var geom)) continue;
+                    if (!geom.TryGetProperty("coordinates", out var coords)) continue;
+                    var coordArr = coords.EnumerateArray().ToArray();
+                    if (coordArr.Length < 2) continue;
+                    double hLng = coordArr[0].GetDouble();
+                    double hLat = coordArr[1].GetDouble();
+
+                    // Proximity filter — only keep events near our search center
+                    if (HaversineDistanceMiles(centerLat, centerLng, hLat, hLng) > filterMiles) continue;
+
+                    // Hail size in inches
+                    double? size = GetDoubleField(props, "magnitude")
+                                ?? GetDoubleField(props, "magf")
+                                ?? GetDoubleField(props, "size");
+
+                    // Date from "valid" field (ISO 8601)
+                    DateTime date = DateTime.UtcNow.AddYears(-1);
+                    if (props.TryGetProperty("valid", out var vt))
+                        DateTime.TryParse(vt.GetString(), null,
+                            System.Globalization.DateTimeStyles.RoundtripKind, out date);
+
+                    results.Add(new HailEvent
+                    {
+                        Lat        = hLat,
+                        Lng        = hLng,
+                        SizeInches = size ?? 0.75,
+                        Date       = date,
+                        Source     = "lsr"
+                    });
+                }
+            }
+            catch (Exception)
+            {
+                // Parse failure — return empty
+            }
+            return results;
+        }
+
+        // ─────────────────────────────────────────────────────────────────
         // 3. Regrid Parcel API  –  property owner names
         //    Requires a free Regrid token (25 lookups/day on free Starter plan).
         //    Sign up at: https://app.regrid.com
@@ -684,6 +824,206 @@ out center;";
             public double   Lng        { get; init; }
             public double   SizeInches { get; init; }
             public DateTime Date       { get; init; }
+            public string   Source     { get; init; } = "noaa";
         }
-    }
-}
+
+
+        // ─────────────────────────────────────────────────────────────────
+        // 4. BatchSkipTracing  -  phone + email lookup
+        //    Sign up: https://batchskiptracing.com
+        //    Config:  "BatchSkipTracing": { "ApiKey": "..." }
+        // ─────────────────────────────────────────────────────────────────
+        public record BstContactData(string? Phone, string? Email);
+
+        public async Task<BstContactData?> GetBstContactAsync(
+            string apiKey, string? ownerName, string address)
+        {
+            try
+            {
+                var nameParts = (ownerName ?? "").Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                var firstName = nameParts.Length > 0 ? nameParts[0] : "";
+                var lastName  = nameParts.Length > 1 ? nameParts[1] : "";
+
+                var cleaned  = address.Replace(", USA", "").Replace(", United States", "");
+                var parts    = cleaned.Split(',');
+                var street   = parts.Length > 0 ? parts[0].Trim() : cleaned;
+                var city     = parts.Length > 1 ? parts[1].Trim() : "";
+                var stateZip = parts.Length > 2 ? parts[2].Trim().Split(' ') : System.Array.Empty<string>();
+                var state    = stateZip.Length > 0 ? stateZip[0].ToUpperInvariant() : "";
+                var zip      = stateZip.Length > 1 ? stateZip[1] : "";
+
+                var payload = new { firstName, lastName, address = street, city, state, zip };
+                var json    = JsonSerializer.Serialize(payload);
+                var content = new System.Net.Http.StringContent(
+                    json, System.Text.Encoding.UTF8, "application/json");
+
+                using var client = _httpFactory.CreateClient("bst");
+                client.DefaultRequestHeaders.Authorization =
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+                client.Timeout = TimeSpan.FromSeconds(20);
+
+                var resp = await client.PostAsync(
+                    "https://api.batchskiptracing.com/api/lead", content);
+                var body = await resp.Content.ReadAsStringAsync();
+
+                _logger.LogInformation("BST {Status} for {Address}: {Body}",
+                    resp.StatusCode, address, body.Length > 400 ? body[..400] : body);
+
+                if (!resp.IsSuccessStatusCode) return null;
+                return ParseBstResponse(body);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "BST call failed for {Address}", address);
+                return null;
+            }
+        }
+
+        private static BstContactData? ParseBstResponse(string json)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var output = doc.RootElement.TryGetProperty("output", out var o)
+                               ? o : doc.RootElement;
+
+                string? phone = null;
+                string? email = null;
+
+                if (output.TryGetProperty("phones", out var phones) &&
+                    phones.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var p in phones.EnumerateArray())
+                    {
+                        var num = p.TryGetProperty("phone", out var pv) ? pv.GetString() : null;
+                        var type = p.TryGetProperty("phoneType", out var tv) ? tv.GetString() : null;
+                        if (num == null) continue;
+                        if (phone == null) phone = num;
+                        if (type != null &&
+                            type.Contains("Mobile", StringComparison.OrdinalIgnoreCase))
+                        { phone = num; break; }
+                    }
+                }
+
+                if (output.TryGetProperty("emails", out var emails) &&
+                    emails.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var e in emails.EnumerateArray())
+                    {
+                        var addr = e.TryGetProperty("email", out var ev) ? ev.GetString() : null;
+                        if (addr != null) { email = addr; break; }
+                    }
+                }
+
+                return (phone == null && email == null) ? null
+                       : new BstContactData(phone, email);
+            }
+            catch { return null; }
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // 5. Whitepages Pro  -  phone + email from name + address
+        //    Sign up: https://pro.whitepages.com
+        //    Config:  "WhitepagesPro": { "ApiKey": "..." }
+        //    Docs:    https://proapi.whitepages.com/3.0/person
+        // ─────────────────────────────────────────────────────────────────
+        public record WpContactData(string? OwnerName, string? Phone, string? Email, string ContactType = "owner");
+
+        public async Task<List<WpContactData>> GetWhitepagesContactAsync(
+            string apiKey, string? ownerName, string address)
+        {
+            try
+            {
+                // v2 property endpoint — reverse address lookup, key in X-Api-Key header
+                var cleaned  = address.Replace(", USA", "").Replace(", United States", "");
+                var parts    = cleaned.Split(',');
+                var street   = parts.Length > 0 ? parts[0].Trim() : cleaned;
+                var city     = parts.Length > 1 ? parts[1].Trim() : "";
+                var stateZip = parts.Length > 2 ? parts[2].Trim().Split(' ') : System.Array.Empty<string>();
+                var state    = stateZip.Length > 0 ? stateZip[0].ToUpperInvariant() : "";
+
+                var qs  = $"street={Uri.EscapeDataString(street)}" +
+                          $"&city={Uri.EscapeDataString(city)}" +
+                          $"&state_code={Uri.EscapeDataString(state)}";
+                var url = $"https://api.whitepages.com/v2/property/?{qs}";
+
+                using var client = _httpFactory.CreateClient("whitepages");
+                client.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
+
+                var resp = await client.GetAsync(url);
+                var body = await resp.Content.ReadAsStringAsync();
+
+                _logger.LogInformation("Whitepages {Status} for {Address}: {Body}",
+                    resp.StatusCode, address, body.Length > 800 ? body[..800] : body);
+
+                if (!resp.IsSuccessStatusCode) return new();
+                return ParseWhitepagesResponse(body);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Whitepages call failed for {Address}", address);
+                return new();
+            }
+        }
+
+        // Public wrapper for testing without real API calls
+        public List<WpContactData> ParseWpResponsePublic(string json) => ParseWhitepagesResponse(json);
+
+        private static List<WpContactData> ParseWhitepagesResponse(string json)
+        {
+            // result.ownership_info.person_owners[] — owners (preferred, labeled "owner")
+            // result.residents[]                    — residents (labeled "resident")
+            // Deduplicate by person id across both arrays.
+            var results = new List<WpContactData>();
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("result", out var result))
+                    return results;
+
+                var seen = new HashSet<string>();
+
+                void ExtractPerson(JsonElement person, string contactType)
+                {
+                    var id   = person.TryGetProperty("id",   out var iv) ? iv.GetString() ?? "" : "";
+                    var name = person.TryGetProperty("name", out var nv) ? nv.GetString() : null;
+
+                    // Deduplicate by id (same person can appear in both owners + residents)
+                    if (!string.IsNullOrEmpty(id) && !seen.Add(id)) return;
+
+                    // Best phone — prefer Mobile
+                    string? phone = null;
+                    if (person.TryGetProperty("phones", out var phones) &&
+                        phones.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var p in phones.EnumerateArray())
+                        {
+                            var num  = p.TryGetProperty("number", out var pv) ? pv.GetString() : null;
+                            var type = p.TryGetProperty("type",   out var tv) ? tv.GetString() : null;
+                            if (num == null) continue;
+                            if (phone == null) phone = num;
+                            if (type != null && type.Equals("Mobile", StringComparison.OrdinalIgnoreCase))
+                            { phone = num; break; }
+                        }
+                    }
+
+                    // First email
+                    string? email = null;
+                    if (person.TryGetProperty("emails", out var emails) &&
+                        emails.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var e in emails.EnumerateArray())
+                        {
+                            var addr = e.TryGetProperty("email", out var ev) ? ev.GetString() : null;
+                            if (addr != null) { email = addr; break; }
+                        }
+                    }
+
+                    if (phone != null || email != null)
+                        results.Add(new WpContactData(name, phone, email, contactType));
+                }
+
+                if (result.TryGetProperty("ownership_info", out var oi) &&
+                    oi.TryGetProperty("person_owners", out var owners) &&
+                    owners.ValueKind == JsonValueKind.Array)
+                    foreach (var o in owners.Enumera

@@ -72,6 +72,21 @@ builder.Services.AddHttpClient("regrid", c =>
 {
     c.Timeout = TimeSpan.FromSeconds(15);
 });
+builder.Services.AddHttpClient("mesonet", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(30);
+    c.DefaultRequestHeaders.Add("User-Agent", "StormLeadPro/1.0");
+});
+builder.Services.AddHttpClient("bst", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(20);
+    c.DefaultRequestHeaders.Add("User-Agent", "StormLeadPro/1.0");
+});
+builder.Services.AddHttpClient("whitepages", c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(15);
+    c.DefaultRequestHeaders.Add("User-Agent", "StormLeadPro/1.0");
+});
 
 // ── Services ──────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<RealDataService>();
@@ -123,6 +138,7 @@ using (var scope = app.Services.CreateScope())
     AddColumnIfMissing("leads", "notes",         "TEXT");
     AddColumnIfMissing("leads", "is_enriched",   "INTEGER NOT NULL DEFAULT 0");
     AddColumnIfMissing("leads", "deleted_at",    "TEXT");
+    AddColumnIfMissing("leads", "status",        "TEXT NOT NULL DEFAULT 'new'");
 
     if (!TableExists("enrichments"))
     {
@@ -147,26 +163,6 @@ using (var scope = app.Services.CreateScope())
         cmd.ExecuteNonQuery();
     }
 
-    conn.Close();
-}
-
-if (!app.Environment.IsDevelopment())
-{
-    app.UseExceptionHandler("/Home/Error");
-    app.UseHsts();
-}
-
-if (app.Environment.IsDevelopment())
-    app.UseHttpsRedirection();
-
-app.UseStaticFiles();
-app.UseRouting();
-
-app.UseAuthentication();
-app.UseAuthorization();
-
-app.MapControllerRoute(
-    name:    "default",
-    pattern: "{controller=Home}/{action=Index}/{id?}");
-
-app.Run();
+    if (!TableExists("lead_contacts"))
+    {
+        using var cmd = conn.Create
