@@ -15,7 +15,9 @@
 /RoofingLeadGeneration/appsettings.Development.json
 
 # SQLite database (runtime artifact)
-/RoofingLeadGeneration/data/
+/RoofingLeadGeneration/data/*.db
+/RoofingLeadGeneration/data/*.db-shm
+/RoofingLeadGeneration/data/*.db-wal
 
 # OS
 .DS_Store
