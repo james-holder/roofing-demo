@@ -773,6 +773,133 @@ out center;";
                   .TextInfo.ToTitleCase(s.ToLower().Trim());
 
         // ─────────────────────────────────────────────────────────────────
+        // 6. Tomorrow.io Historical Weather  –  fills the NOAA 120-day lag
+        //    Free plan: 500 req/day, 5+ years of history.
+        //    Uses the Timelines API with daily timesteps to find ice-pellet /
+        //    hail days (precipitationType == 4 or weatherCode 7000-7102).
+        //    We query at the search CENTER — events are then scored against
+        //    every property using the same haversine proximity filter as NOAA.
+        //    Docs: https://docs.tomorrow.io/reference/timelines
+        // ─────────────────────────────────────────────────────────────────
+        public async Task<List<HailEvent>> GetTomorrowIoHailAsync(
+            double lat, double lng, string apiKey)
+        {
+            if (string.IsNullOrWhiteSpace(apiKey)) return new List<HailEvent>();
+
+            var results   = new List<HailEvent>();
+            var endTime   = DateTime.UtcNow;
+            var startTime = endTime.AddYears(-2);   // 2-year look-back
+
+            // Split into two 1-year windows — keeps each request small and
+            // well within Tomorrow.io's per-request data limits.
+            var windows = new[]
+            {
+                (startTime,          startTime.AddYears(1)),
+                (startTime.AddYears(1), endTime)
+            };
+
+            foreach (var (from, to) in windows)
+            {
+                try
+                {
+                    // Timelines API — daily timestep, imperial units
+                    var url = "v4/timelines" +
+                              $"?location={lat},{lng}" +
+                              "&fields=precipitationType,precipitationIntensity,weatherCode" +
+                              "&timesteps=1d" +
+                              $"&startTime={from:yyyy-MM-ddTHH:mm:ssZ}" +
+                              $"&endTime={to:yyyy-MM-ddTHH:mm:ssZ}" +
+                              "&units=imperial" +
+                              $"&apikey={apiKey}";
+
+                    using var client = _httpFactory.CreateClient("tomorrow");
+                    var resp = await client.GetAsync(url);
+                    var body = await resp.Content.ReadAsStringAsync();
+
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        _logger.LogWarning("Tomorrow.io returned {Status}: {Body}",
+                            resp.StatusCode, body.Length > 300 ? body[..300] : body);
+                        continue;
+                    }
+
+                    ParseTomorrowIoTimeline(body, lat, lng, results);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Tomorrow.io fetch failed for window {From:yyyy-MM-dd}:{To:yyyy-MM-dd}",
+                        from, to);
+                }
+            }
+
+            _logger.LogInformation("Tomorrow.io returned {Count} hail events near {Lat},{Lng}",
+                results.Count, lat, lng);
+
+            return results;
+        }
+
+        private static void ParseTomorrowIoTimeline(
+            string json, double lat, double lng, List<HailEvent> results)
+        {
+            try
+            {
+                using var doc  = JsonDocument.Parse(json);
+                var       root = doc.RootElement;
+
+                // Navigate: data.timelines[0].intervals[]
+                if (!root.TryGetProperty("data", out var data))             return;
+                if (!data.TryGetProperty("timelines", out var timelines))   return;
+                if (timelines.GetArrayLength() == 0)                        return;
+
+                var timeline = timelines[0];
+                if (!timeline.TryGetProperty("intervals", out var intervals)) return;
+
+                foreach (var interval in intervals.EnumerateArray())
+                {
+                    if (!interval.TryGetProperty("values", out var vals)) continue;
+
+                    // precipitationType 4 = Ice Pellets (closest to hail)
+                    // weatherCode 7000–7102 = Ice Pellet events
+                    var precipType  = GetDoubleField(vals, "precipitationType");
+                    var weatherCode = GetDoubleField(vals, "weatherCode");
+                    var intensity   = GetDoubleField(vals, "precipitationIntensity") ?? 0;
+
+                    bool isHail = precipType == 4
+                               || (weatherCode >= 7000 && weatherCode <= 7102);
+
+                    if (!isHail) continue;
+
+                    // Parse the interval start time
+                    DateTime date = DateTime.UtcNow.AddYears(-1);
+                    if (interval.TryGetProperty("startTime", out var st))
+                        DateTime.TryParse(st.GetString(), null,
+                            System.Globalization.DateTimeStyles.RoundtripKind, out date);
+
+                    // Estimate hail size from precipitation intensity.
+                    // Tomorrow.io free tier does not provide actual hail diameter,
+                    // so we use a conservative default in the penny–quarter range.
+                    // intensity is in in/hr on imperial units.
+                    double sizeInches = intensity >= 0.15 ? 1.00   // quarter-sized (roof damage threshold)
+                                      : intensity >= 0.05 ? 0.88   // penny-sized
+                                      :                     0.75;  // pea-sized
+
+                    results.Add(new HailEvent
+                    {
+                        Lat        = lat,
+                        Lng        = lng,
+                        SizeInches = sizeInches,
+                        Date       = date,
+                        Source     = "tomorrow"
+                    });
+                }
+            }
+            catch (Exception)
+            {
+                // Silently swallow parse errors — caller handles partial results
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────
         // Haversine distance helper (used by RoofHealthController)
         // ─────────────────────────────────────────────────────────────────
         public static double HaversineDistanceMiles(
@@ -1026,4 +1153,15 @@ out center;";
                 if (result.TryGetProperty("ownership_info", out var oi) &&
                     oi.TryGetProperty("person_owners", out var owners) &&
                     owners.ValueKind == JsonValueKind.Array)
-                    foreach (var o in owners.Enumera
+                    foreach (var o in owners.EnumerateArray()) ExtractPerson(o, "owner");
+
+                if (result.TryGetProperty("residents", out var residents) &&
+                    residents.ValueKind == JsonValueKind.Array)
+                    foreach (var r in residents.EnumerateArray()) ExtractPerson(r, "resident");
+            }
+            catch { }
+            return results;
+        }
+
+    }
+}

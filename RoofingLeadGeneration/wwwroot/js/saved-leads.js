@@ -588,7 +588,8 @@ function hailLabel(raw) {
     else if (n < 1.50) ref = { label: 'Half Dollar', cls: 'text-orange-400' };
     else if (n < 1.75) ref = { label: 'Ping Pong',   cls: 'text-orange-500' };
     else if (n < 2.00) ref = { label: 'Golf Ball',   cls: 'text-red-400'    };
-    else if (n < 2.75) ref = { label: 'Tennis Ball', cls: 'text-red-400'    };
+    else if (n < 2.50) ref = { label: 'Hen Egg',     cls: 'text-red-400'    };
+    else if (n < 2.75) ref = { label: 'Tennis Ball', cls: 'text-red-500'    };
     else if (n < 4.00) ref = { label: 'Baseball',    cls: 'text-red-500'    };
     else               ref = { label: 'Softball',    cls: 'text-red-600'    };
     return ref;

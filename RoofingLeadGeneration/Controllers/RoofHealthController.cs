@@ -12,17 +12,21 @@ namespace RoofingLeadGeneration.Controllers
     {
         private readonly RealDataService              _realData;
         private readonly string                       _apiKey;
+        private readonly string                       _tomorrowKey;
+        private readonly IWebHostEnvironment          _env;
         private readonly ILogger<RoofHealthController> _logger;
 
         private const string GeocodingBase = "https://maps.googleapis.com/maps/api/geocode/json";
 
         public RoofHealthController(RealDataService realData, IConfiguration config,
-                                    ILogger<RoofHealthController> logger)
+                                    IWebHostEnvironment env, ILogger<RoofHealthController> logger)
         {
-            _realData = realData;
-            _logger   = logger;
-            _apiKey   = config["GoogleMaps:ApiKey"] ?? throw new InvalidOperationException(
+            _realData    = realData;
+            _env         = env;
+            _logger      = logger;
+            _apiKey      = config["GoogleMaps:ApiKey"] ?? throw new InvalidOperationException(
                 "GoogleMaps:ApiKey is not configured in appsettings.json");
+            _tomorrowKey = config["TomorrowIo:ApiKey"] ?? "";
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -36,6 +40,9 @@ namespace RoofingLeadGeneration.Controllers
         [HttpGet("RegridDebug")]
         public async Task<IActionResult> RegridDebug(string address = "312 Meandering Way, Glenn Heights, TX 75154")
         {
+            if (!_env.IsDevelopment())
+                return NotFound();
+
             var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
             var token  = config["Regrid:Token"] ?? "";
 
@@ -72,6 +79,9 @@ namespace RoofingLeadGeneration.Controllers
         [HttpGet("GridDebug")]
         public async Task<IActionResult> GridDebug(double lat = 32.54, double lng = -96.86, double radius = 0.5)
         {
+            if (!_env.IsDevelopment())
+                return NotFound();
+
             // Single-point test first
             using var singleClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
             var singleUrl  = $"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat},{lng}&result_type=street_address&key={_apiKey}";
@@ -96,6 +106,9 @@ namespace RoofingLeadGeneration.Controllers
         [HttpGet("LsrDebug")]
         public async Task<IActionResult> LsrDebug(double lat = 32.54, double lng = -96.86, string state = "TX")
         {
+            if (!_env.IsDevelopment())
+                return NotFound();
+
             var events = await _realData.GetMesonetLsrHailAsync(lat, lng, 5.0, state);
             return Json(new
             {
@@ -109,11 +122,24 @@ namespace RoofingLeadGeneration.Controllers
             }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         }
 
+        // ── Dev-only diagnostics ─────────────────────────────────────────────
+        // These endpoints are blocked in production (non-Development environments).
+        // To use locally: ASPNETCORE_ENVIRONMENT=Development (the default for `dotnet run`).
+
         [HttpGet("HailDebug")]
         public async Task<IActionResult> HailDebug(double lat = 32.54, double lng = -96.86, string state = "TX")
         {
-            var swdiEvents    = await SafeSwdi(lat, lng, 5.0);
-            var lsrEvents     = await SafeLsr(lat, lng, 5.0, state);
+            if (!_env.IsDevelopment())
+                return NotFound();
+
+            var swdiTask     = SafeSwdi(lat, lng, 5.0);
+            var lsrTask      = SafeLsr(lat, lng, 5.0, state);
+            var tomorrowTask = SafeTomorrow(lat, lng);
+            await Task.WhenAll(swdiTask, lsrTask, tomorrowTask);
+
+            var swdiEvents     = swdiTask.Result;
+            var lsrEvents      = lsrTask.Result;
+            var tomorrowEvents = tomorrowTask.Result;
 
             // Also probe a single raw SWDI URL so we can see what the API actually returns
             double span  = 5.0 / 69.0;
@@ -136,8 +162,9 @@ namespace RoofingLeadGeneration.Controllers
 
             return Json(new
             {
-                swdi    = new { count = swdiEvents.Count,  sample = swdiEvents.Take(3).Select(e => new { e.Lat, e.Lng, e.SizeInches, date = e.Date.ToString("yyyy-MM-dd") }) },
-                lsr     = new { count = lsrEvents.Count,   sample = lsrEvents.Take(3).Select(e  => new { e.Lat, e.Lng, e.SizeInches, date = e.Date.ToString("yyyy-MM-dd") }) },
+                swdi     = new { count = swdiEvents.Count,     sample = swdiEvents.Take(3).Select(e    => new { e.Lat, e.Lng, e.SizeInches, date = e.Date.ToString("yyyy-MM-dd") }) },
+                lsr      = new { count = lsrEvents.Count,      sample = lsrEvents.Take(3).Select(e     => new { e.Lat, e.Lng, e.SizeInches, date = e.Date.ToString("yyyy-MM-dd") }) },
+                tomorrow = new { count = tomorrowEvents.Count, sample = tomorrowEvents.Take(3).Select(e => new { e.Lat, e.Lng, e.SizeInches, date = e.Date.ToString("yyyy-MM-dd"), e.Source }) },
                 rawSwdiProbe = new { url = probeUrl, bodyPreview = probeBody }
             }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         }
@@ -236,6 +263,12 @@ namespace RoofingLeadGeneration.Controllers
             try   { return await _realData.GetMesonetLsrHailAsync(lat, lng, r, state); }
             catch (Exception ex) { _logger.LogError(ex, "Mesonet LSR fetch failed"); return new(); }
         }
+        private async Task<List<RealDataService.HailEvent>> SafeTomorrow(double lat, double lng)
+        {
+            if (string.IsNullOrWhiteSpace(_tomorrowKey)) return new();
+            try   { return await _realData.GetTomorrowIoHailAsync(lat, lng, _tomorrowKey); }
+            catch (Exception ex) { _logger.LogError(ex, "Tomorrow.io fetch failed"); return new(); }
+        }
         private async Task<List<RealDataService.OsmAddress>> SafeOsm(double lat, double lng, double r)
         {
             try   { return await _realData.GetNearbyAddressesAsync(lat, lng, r); }
@@ -255,27 +288,29 @@ namespace RoofingLeadGeneration.Controllers
                 if (m.Success) stateAbbr = m.Groups[1].Value;
             }
 
-            // Run OSM, SWDI, and Mesonet LSR fully in parallel — each wrapped so
-            // a failure in one source never blocks the others.
-            var osmTask     = SafeOsm(centerLat, centerLng, radiusMiles);
-            var swdiTask    = SafeSwdi(centerLat, centerLng, radiusMiles);
-            var mesonetTask = SafeLsr(centerLat, centerLng, radiusMiles, stateAbbr);
+            // Run OSM, SWDI, Mesonet LSR, and Tomorrow.io fully in parallel —
+            // each wrapped so a failure in one source never blocks the others.
+            var osmTask      = SafeOsm(centerLat, centerLng, radiusMiles);
+            var swdiTask     = SafeSwdi(centerLat, centerLng, radiusMiles);
+            var mesonetTask  = SafeLsr(centerLat, centerLng, radiusMiles, stateAbbr);
+            var tomorrowTask = SafeTomorrow(centerLat, centerLng);
 
-            await Task.WhenAll(osmTask, swdiTask, mesonetTask);
+            await Task.WhenAll(osmTask, swdiTask, mesonetTask, tomorrowTask);
 
             var osmAddresses = osmTask.Result;
 
-            // Merge all hail sources — LSR events tagged Source="lsr"
+            // Merge all hail sources
             var hailEvents = new List<RealDataService.HailEvent>();
             hailEvents.AddRange(swdiTask.Result);
             hailEvents.AddRange(mesonetTask.Result);
+            hailEvents.AddRange(tomorrowTask.Result);   // fills NOAA 120-day lag
 
             // Fallback: if OSM returned nothing (common in newer suburbs), use Google reverse-geocode grid
             if (osmAddresses.Count == 0)
                 osmAddresses = await _realData.GetAddressesViaGoogleGridAsync(
                     centerLat, centerLng, radiusMiles, _apiKey);
 
-            // Fallback: if no hail data at all, try NOAA Storm Events (ground-truth reports)
+            // Fallback: if still no hail data at all, try NOAA Storm Events (ground-truth reports)
             if (hailEvents.Count == 0 && !string.IsNullOrEmpty(stateAbbr))
             {
                 var stormEvents = await _realData.GetStormEventsHailAsync(
@@ -370,9 +405,12 @@ namespace RoofingLeadGeneration.Controllers
             var mostRecent = nearby.OrderByDescending(x => x.h.Date).First();
             string stormDate = mostRecent.h.Date.ToString("yyyy-MM-dd");
 
-            // Source label — prefer LSR (ground truth) > noaa
-            bool hasLsr  = nearby.Any(x => x.h.Source == "lsr");
-            string source = hasLsr ? "lsr+noaa" : "noaa";
+            // Source label — prefer LSR (ground truth) > tomorrow > noaa
+            bool hasLsr      = nearby.Any(x => x.h.Source == "lsr");
+            bool hasTomorrow = nearby.Any(x => x.h.Source == "tomorrow");
+            string source    = hasLsr      ? "lsr+noaa"
+                             : hasTomorrow ? "tomorrow+noaa"
+                             :               "noaa";
 
             // Claim window calculation
             int daysSince = (int)(DateTime.UtcNow - mostRecent.h.Date).TotalDays;

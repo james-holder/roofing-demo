@@ -454,10 +454,15 @@
         const m = (sizeStr || '').match(/[\d.]+/);
         if (!m) return '';
         const s = parseFloat(m[0]);
+        if (s >= 4.00) return '🥎 Softball';
         if (s >= 2.75) return '⚾ Baseball';
+        if (s >= 2.50) return '🎾 Tennis Ball';
+        if (s >= 2.00) return '🥚 Hen Egg';
         if (s >= 1.75) return '⛳ Golf Ball';
         if (s >= 1.50) return '🏓 Ping Pong';
+        if (s >= 1.25) return '🪙 Half Dollar';
         if (s >= 1.00) return '🪙 Quarter';
+        if (s >= 0.88) return '🪙 Nickel';
         if (s >= 0.75) return '🪙 Penny';
         if (s >= 0.50) return '🔵 Marble';
         return '🟡 Pea';
