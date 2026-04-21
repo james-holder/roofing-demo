@@ -16,9 +16,4 @@
 
 # SQLite database (runtime artifact)
 /RoofingLeadGeneration/data/*.db
-/RoofingLeadGeneration/data/*.db-shm
-/RoofingLeadGeneration/data/*.db-wal
-
-# OS
-.DS_Store
-Thumbs.db
+/RoofingLeadGeneration/dat
