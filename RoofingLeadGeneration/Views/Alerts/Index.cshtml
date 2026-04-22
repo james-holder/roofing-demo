@@ -63,14 +63,21 @@
 <main class="max-w-4xl mx-auto px-4 sm:px-6 py-8">
 
     <!-- Header -->
-    <div class="mb-8">
-        <h1 class="text-2xl font-bold text-white mb-1">
-            <i class="fa-solid fa-bell text-brand mr-2"></i>Storm Alerts
-        </h1>
-        <p class="text-slate-400 text-sm">
-            Add the areas you work and we'll email you within 30 minutes when hail hits.
-            No leads required — the storm is your signal to go find them.
-        </p>
+    <div class="mb-8 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-white mb-1">
+                <i class="fa-solid fa-bell text-brand mr-2"></i>Storm Alerts
+            </h1>
+            <p class="text-slate-400 text-sm">
+                Add the areas you work and we'll email you within 30 minutes when hail hits.
+                No leads required — the storm is your signal to go find them.
+            </p>
+        </div>
+        <button onclick="sendTestEmail()" id="testEmailBtn"
+            class="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 border border-slate-600 text-slate-300 hover:text-white text-sm font-medium transition whitespace-nowrap shrink-0">
+            <i class="fa-solid fa-paper-plane text-xs"></i>
+            Send Test Email
+        </button>
     </div>
 
     <!-- Add area form -->
@@ -344,17 +351,3 @@ function escHtml(s) {
 
 function showError(el, msg) {
     el.textContent = msg;
-    el.classList.remove('hidden');
-}
-
-function showToast(msg, ok) {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'fixed bottom-5 right-5 z-50 px-4 py-3 rounded-xl text-sm font-medium shadow-xl border transition-all '
-        + (ok ? 'bg-emerald-900/80 text-emerald-300 border-emerald-700' : 'bg-red-900/80 text-red-300 border-red-700');
-    t.classList.remove('hidden');
-    setTimeout(() => t.classList.add('hidden'), 3500);
-}
-</script>
-</body>
-</html>

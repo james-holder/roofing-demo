@@ -18,7 +18,7 @@
 - [x] **Satellite map tiles** — Esri World Imagery is the default tile layer, with a Street/Satellite toggle button. ✅
 - [x] **Hail size visual indicator** — show a coin/ball comparison next to hail size (penny / quarter / golf ball / baseball). Roofers talk in those terms, not decimal inches. ✅
 - [x] **Mobile field mode** — hamburger nav on all pages, mobile card view on Saved Leads with tap-to-call and action buttons. ✅
-- [ ] **Bulk actions** — bulk delete, bulk export, bulk enrich on the saved leads table.
+- [x] **Bulk actions** — bulk delete, bulk export, bulk enrich on the saved leads table. Checkboxes on all tabs (except Archived), select-all with indeterminate state, row highlighting, separate bulk delete vs archive. ✅
 - [x] **Notes on leads** — sticky note button on every row, expandable textarea, Ctrl+Enter to save, Esc to cancel, amber highlight when a note exists, included in CSV export. ✅
 
 ## 🟢 Priority 3 — Business Model
@@ -35,7 +35,7 @@
 
 ## 🏆 Priority 2.5 — Competitive Edge (Differentiators)
 
-- [ ] **Homeowner SMS outreach** — send a templated text directly from the lead record ("We noticed your home may have storm damage — we're offering free inspections this week"). Integrates with Twilio. Text response rates are 5x higher than email. Converts StormLead from a data tool into a full outreach platform.
+- [ ] **Homeowner SMS outreach (paid add-on)** — send a templated text directly from the lead record ("We noticed your home may have storm damage — we're offering free inspections this week"). Integrates with Twilio. Text response rates are 5x higher than email. Converts StormLead from a data tool into a full outreach platform. **Pricing model: SMS credit packs** — buy 500 texts for $X, 1,000 for $Y, overage at $0.03/text. Agency plan includes 500 credits/mo with the option to buy more. Credit pack model suits the storm-chasing pattern (storm hits → buy credits → blast the neighborhood). TCPA/DNC compliance layer must ship with this feature — DNC scrub, quiet hours enforcement, STOP opt-out handling, state-level risk flags (FL/CA). Hail-specific personalization in the message body ("A 1.5\" hailstone hit your block on March 14") for higher conversion.
 
 - [ ] **Claim window countdown by state** — each state has a different statute of limitations (TX: 2yr, FL: 3yr, CO: 2yr, etc.). Auto-detect state from lead address and show the exact deadline date ("47 days left to file") rather than just hot/fileable/expired. Turns the app into a closing tool, not just a data tool.
 
@@ -45,11 +45,4 @@
 
 - [ ] **Neighborhood saturation tracking** — show which streets your team has already contacted so reps don't reach out to the same households twice. Shared across team accounts.
 
-- [ ] **Canvassing route optimizer** — GPS-optimized driving/walking order through saved leads. Lower priority — StormLead is a phone/email outreach tool, not a door-to-door tool.
-
-## 🔵 Priority 4 — Differentiation / Longer Term
-
-- [ ] **Permit data overlay** — pull county building permit data (many counties publish this publicly). Recent roofing permits on nearby houses = strong storm damage signal.
-- [ ] **Zapier / HubSpot integration** — push new leads directly into the contractor's existing CRM.
-- [ ] **White-label / agency mode** — let roofing marketing agencies run the platform for multiple contractor clients under their own branding.
-- [ ] **Progressive Web App (PWA)** — installable on a phone, works offline for field use. Required foundation for push notifications and the route optimizer.
+- [ ] **Canvassing route optimizer** — GPS-optimized driving/walking order through saved leads. Lower priority — StormLead is a pho
