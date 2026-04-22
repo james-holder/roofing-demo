@@ -65,9 +65,4 @@ namespace RoofingLeadGeneration.Controllers
                     Status:    e.Status    ?? "",
                     CreatedAt: e.CreatedAt.ToString("o")
                 ))
-                .ToList();
-
-            return View();
-        }
-    }
-}
+               

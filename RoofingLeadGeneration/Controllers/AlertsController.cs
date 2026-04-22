@@ -164,7 +164,4 @@ namespace RoofingLeadGeneration.Controllers
 
         public record UpdateWatchedAreaRequest(
             double? RadiusMiles,
-            double? MinHailSizeInches,
-            bool?   AlertsEnabled);
-    }
-}
+            double? MinHa

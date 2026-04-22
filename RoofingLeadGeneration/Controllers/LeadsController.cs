@@ -252,6 +252,30 @@ namespace RoofingLeadGeneration.Controllers
             return Json(new { archived = leads.Count });
         }
 
+        // ── POST /Leads/BulkDelete ───────────────────────────
+        // Soft-deletes all matching leads owned by the current user
+        // (enriched or not). Used by the bulk-actions toolbar.
+        [HttpPost("BulkDelete")]
+        public async Task<IActionResult> BulkDelete([FromBody] BulkRequest req)
+        {
+            if (req?.Ids == null || req.Ids.Length == 0)
+                return BadRequest(new { error = "No lead IDs provided." });
+
+            var userId = CurrentUserId;
+            var leads  = await _db.Leads
+                .Where(l => req.Ids.Contains(l.Id) &&
+                            (l.UserId == userId || l.UserId == null) &&
+                            l.DeletedAt == null)
+                .ToListAsync();
+
+            var now = DateTime.UtcNow;
+            foreach (var lead in leads)
+                lead.DeletedAt = now;
+
+            await _db.SaveChangesAsync();
+            return Json(new { archived = leads.Count });
+        }
+
         // ── GET /Leads/Stats ─────────────────────────────────────────
         [HttpGet("Stats")]
         public async Task<IActionResult> Stats()

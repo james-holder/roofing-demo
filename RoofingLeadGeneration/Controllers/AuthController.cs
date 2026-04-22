@@ -166,38 +166,4 @@ namespace RoofingLeadGeneration.Controllers
             user = new User
             {
                 Provider    = provider,
-                ProviderId  = providerId,
-                Email       = email,
-                DisplayName = name,
-                CreatedAt   = DateTime.UtcNow
-            };
-            _db.Users.Add(user);
-            await _db.SaveChangesAsync();
-            return user.Id;
-        }
-
-        private async Task SignInUserAsync(
-            long userId, string provider, string providerId, string email, string name)
-        {
-            var claims = new List<Claim>
-            {
-                new(ClaimTypes.NameIdentifier, providerId),
-                new(ClaimTypes.Name,           name),
-                new(ClaimTypes.Email,          email),
-                new("provider",                provider),
-                new("user_db_id",              userId.ToString())
-            };
-
-            var identity  = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-            var props     = new AuthenticationProperties
-            {
-                IsPersistent = true,
-                ExpiresUtc   = DateTimeOffset.UtcNow.AddDays(30)
-            };
-
-            await HttpContext.SignInAsync(
-                CookieAuthenticationDefaults.AuthenticationScheme,
-                new ClaimsPrincipal(identity), props);
-        }
-    }
-}
+             

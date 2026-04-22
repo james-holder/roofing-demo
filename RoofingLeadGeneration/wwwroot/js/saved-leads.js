@@ -25,10 +25,12 @@ function switchLeadTab(tab) {
     document.getElementById('tabClosed').classList.toggle('lead-tab-active',    tab === 'closed');
     document.getElementById('tabArchived').classList.toggle('lead-tab-active',   tab === 'archived');
 
-    // Bulk toolbar & checkbox only on unenriched tab
+    // Bulk toolbar & checkbox visibility - checkboxes on all active tabs, not archived
     document.getElementById('bulkToolbar').classList.add('hidden');
     var thCb = document.getElementById('thCheckbox');
-    if (thCb) thCb.classList.toggle('hidden', tab !== 'unenriched');
+    if (thCb) thCb.classList.toggle('hidden', tab === 'archived');
+    var selectAll = document.getElementById('selectAll');
+    if (selectAll) { selectAll.checked = false; selectAll.indeterminate = false; }
 
     loadLeads();
 }
@@ -116,26 +118,66 @@ function toggleSelectAll(cb) {
         c.checked = checked;
         var id = parseInt(c.dataset.id);
         if (checked) selectedIds.add(id); else selectedIds.delete(id);
+        applyRowHighlight(id, checked);
     });
+    cb.indeterminate = false;
     updateBulkToolbar();
 }
 
 function toggleRowSelect(cb) {
     var id = parseInt(cb.dataset.id);
     if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+    applyRowHighlight(id, cb.checked);
     updateBulkToolbar();
-    var allCbs   = document.querySelectorAll('.row-checkbox');
+    updateSelectAllState();
+}
+
+function updateSelectAllState() {
+    var allCbs = document.querySelectorAll('.row-checkbox');
     var selectAll = document.getElementById('selectAll');
-    if (selectAll) selectAll.checked = allCbs.length > 0 && Array.from(allCbs).every(function(c) { return c.checked; });
+    if (!selectAll) return;
+    var total   = allCbs.length;
+    var checked = Array.from(allCbs).filter(function(c) { return c.checked; }).length;
+    selectAll.checked       = total > 0 && checked === total;
+    selectAll.indeterminate = checked > 0 && checked < total;
+}
+
+function applyRowHighlight(id, on) {
+    var row = document.querySelector('tr[data-lead-id="' + id + '"]');
+    if (!row) return;
+    if (on) {
+        row.classList.add('row-selected', 'bg-orange-500/5', 'border-l-2', 'border-orange-500');
+    } else {
+        row.classList.remove('row-selected', 'bg-orange-500/5', 'border-l-2', 'border-orange-500');
+    }
+}
+
+function clearSelection() {
+    selectedIds.clear();
+    document.querySelectorAll('.row-checkbox').forEach(function(c) { c.checked = false; });
+    document.querySelectorAll('tr.row-selected').forEach(function(r) {
+        r.classList.remove('row-selected', 'bg-orange-500/5', 'border-l-2', 'border-orange-500');
+    });
+    var selectAll = document.getElementById('selectAll');
+    if (selectAll) { selectAll.checked = false; selectAll.indeterminate = false; }
+    updateBulkToolbar();
 }
 
 function updateBulkToolbar() {
     var toolbar = document.getElementById('bulkToolbar');
-    var countEl = document.getElementById('selectedCount');
     if (!toolbar) return;
-    var show = selectedIds.size > 0 && activeTab === 'unenriched';
+    var show = selectedIds.size > 0 && activeTab !== 'archived';
     toolbar.classList.toggle('hidden', !show);
-    if (show && countEl) countEl.textContent = selectedIds.size;
+    if (!show) return;
+
+    var countEl  = document.getElementById('selectedCount');
+    var pluralEl = document.getElementById('selectedCountPlural');
+    if (countEl)  countEl.textContent  = selectedIds.size;
+    if (pluralEl) pluralEl.textContent = selectedIds.size === 1 ? '' : 's';
+
+    // Enrich button only makes sense on the unenriched tab
+    var enrichBtn = document.getElementById('btnBulkEnrich');
+    if (enrichBtn) enrichBtn.classList.toggle('hidden', activeTab !== 'unenriched');
 }
 
 // ── Bulk actions ──────────────────────────────────────────────────
@@ -175,9 +217,8 @@ async function bulkArchive() {
     var ids = Array.from(selectedIds);
     if (!confirm('Archive ' + ids.length + ' lead(s)? They will be removed from this list.')) return;
     var btn  = document.getElementById('btnBulkArchive');
-    var orig = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Archiving...';
+    var orig = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Archiving...'; }
     try {
         var resp = await fetch('/Leads/BulkArchive', {
             method: 'POST',
@@ -194,9 +235,47 @@ async function bulkArchive() {
     } catch (e) {
         showToast('Archive failed: ' + e.message, false);
     } finally {
-        btn.disabled = false;
-        btn.innerHTML = orig;
+        if (btn) { btn.disabled = false; btn.innerHTML = orig; }
     }
+}
+
+async function bulkDelete() {
+    if (selectedIds.size === 0) return;
+    var ids = Array.from(selectedIds);
+    if (!confirm('Delete ' + ids.length + ' lead(s)? They will be moved to the Archived tab.')) return;
+    var btn  = document.getElementById('btnBulkDelete');
+    var orig = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Deleting...'; }
+    try {
+        var resp = await fetch('/Leads/BulkDelete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids: ids })
+        });
+        var body = await resp.text();
+        var r;
+        try { r = JSON.parse(body); } catch (_) { throw new Error('Server error - check logs'); }
+        if (!resp.ok) throw new Error(r.error || 'HTTP ' + resp.status);
+        // Remove deleted leads from the in-memory list so the table updates instantly
+        allLeads = allLeads.filter(function(l) { return !selectedIds.has(l.id); });
+        selectedIds.clear();
+        updateTabCounts();
+        renderTable();
+        updateBulkToolbar();
+        showToast('Deleted ' + (r.archived || 0) + ' lead(s)', true);
+        refreshTabCounts();
+    } catch (e) {
+        showToast('Delete failed: ' + e.message, false);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+    }
+}
+
+function bulkExport() {
+    if (selectedIds.size === 0) return;
+    var selected = allLeads.filter(function(l) { return selectedIds.has(l.id); });
+    exportCSV(selected);
+    showToast('Exported ' + selected.length + ' lead(s) to CSV', true);
 }
 
 // ── Table rendering ───────────────────────────────────────────────
@@ -244,6 +323,8 @@ function renderTable() {
     document.querySelectorAll('.row-checkbox').forEach(function(cb) {
         cb.checked = selectedIds.has(parseInt(cb.dataset.id));
     });
+    updateSelectAllState();
+    updateBulkToolbar();
 
     if (editingNotesId != null) {
         var ta = document.getElementById('notesArea_' + editingNotesId);
@@ -360,7 +441,7 @@ function buildRow(lead) {
         ? '<input class="owner-input" id="eEmail_' + lead.id + '" value="' + escapeAttr(lead.ownerEmail || '') + '" placeholder="owner@example.com" />'
         : (lead.ownerEmail ? '<a href="mailto:' + escapeAttr(lead.ownerEmail) + '" class="text-slate-300 hover:text-brand truncate block">' + escapeHtml(lead.ownerEmail) + '</a>' : dash);
 
-    const cbCell = activeTab === 'unenriched'
+    const cbCell = activeTab !== 'archived'
         ? '<td class="w-8"><input type="checkbox" class="row-checkbox accent-orange-500 w-4 h-4 cursor-pointer" data-id="' + lead.id + '" onchange="toggleRowSelect(this)" /></td>'
         : '';
 
@@ -458,7 +539,8 @@ function buildRow(lead) {
             : escapeHtml(lead.hailSize);
     })();
 
-    return '<tr data-lead-id="' + lead.id + '" class="' + (ed ? 'editing' : '') + '">' +
+    const rowSelectedCls = selectedIds.has(lead.id) ? ' row-selected bg-orange-500/5 border-l-2 border-orange-500' : '';
+    return '<tr data-lead-id="' + lead.id + '" class="' + (ed ? 'editing' : '') + rowSelectedCls + '">' +
         cbCell +
         '<td class="font-medium text-white" style="max-width:200px"><span class="block truncate" title="' + escapeAttr(lead.address) + '">' + escapeHtml(lead.address) + '</span>' +
         (lead.sourceAddress ? '<span class="block text-xs text-slate-500 truncate">from ' + escapeHtml(lead.sourceAddress) + '</span>' : '') + '</td>' +
@@ -548,16 +630,17 @@ async function enrichLead(id, btn) {
 }
 
 // ── Export ────────────────────────────────────────────────────────
-function exportCSV() {
+function exportCSV(leadsOverride) {
     var header = ['Address','Risk Level','Hail Size','Last Storm Date','Year Built',
                   'Contact Name','Phone','Email','Contact Type','Is Primary',
                   'Status','Notes','Source Address','Saved At'];
 
     function q(v) { return '"' + (v || '').toString().replace(/"/g,'""') + '"'; }
 
-    var rows = [header.join(',')];
+    var rows     = [header.join(',')];
+    var srcLeads = Array.isArray(leadsOverride) ? leadsOverride : allLeads;
 
-    allLeads.forEach(function(l) {
+    srcLeads.forEach(function(l) {
         var base = [q(l.address), q(l.riskLevel), q(l.hailSize), q(l.lastStormDate), q(l.yearBuilt)];
         var tail = [q(l.status), q(l.notes), q(l.sourceAddress), q(l.savedAt)];
         var contacts = (l.contacts && l.contacts.length > 0) ? l.contacts : null;
