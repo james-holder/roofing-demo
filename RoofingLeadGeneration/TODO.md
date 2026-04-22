@@ -4,7 +4,7 @@
 
 - [x] **Complete BatchSkipTracing integration** — fully wired as fallback when Whitepages Pro is not configured. Whitepages is primary (multi-contact), BST is fallback (single contact). ✅
 - [x] **Lead pipeline / status tracking** — add a `Status` column to leads (New → Contacted → Appointment Set → Closed Won / Closed Lost). Needs DB column, PATCH endpoint, and UI dropdown on the saved leads table. ✅
-- [ ] **Storm alerts + watched areas** — roofers define their territory upfront (address or zip + radius). A background job watches those areas for new hail events via Tomorrow.io and sends an email alert within minutes of a storm, before the roofer has saved a single lead. Alert email includes hail size, area name, and a deep link that drops them straight into a pre-filtered neighborhood search. This is the onboarding hook — sign up, set your territory, get alerted. Watched areas are unlimited (revisit per-plan limits when Stripe billing is added). Components:
+- [x] **Storm alerts + watched areas** ✅ — roofers define their territory upfront (address or zip + radius). A background job watches those areas for new hail events via Tomorrow.io and sends an email alert within minutes of a storm, before the roofer has saved a single lead. Alert email includes hail size, area name, and a deep link that drops them straight into a pre-filtered neighborhood search. This is the onboarding hook — sign up, set your territory, get alerted. Watched areas are unlimited (revisit per-plan limits when Stripe billing is added). Components:
   - **WatchedAreas DB table** — userId, label, centerLat, centerLng, radiusMiles, minHailSizeInches (default 1.0"), createdAt
   - **Watched areas UI** — add area by typing an address/zip, pick radius (5/10/25/50 miles), set minimum hail size. Simple list management, no map drawing needed (Options B/C — map drawing and named multi-zone territories — deferred for later).
   - **Background service** — ASP.NET `BackgroundService`, polls every 30 min, calls Tomorrow.io for each watched area, deduplicates via SentAlerts table
@@ -37,7 +37,7 @@
 
 - [ ] **Homeowner SMS outreach (paid add-on)** — send a templated text directly from the lead record ("We noticed your home may have storm damage — we're offering free inspections this week"). Integrates with Twilio. Text response rates are 5x higher than email. Converts StormLead from a data tool into a full outreach platform. **Pricing model: SMS credit packs** — buy 500 texts for $X, 1,000 for $Y, overage at $0.03/text. Agency plan includes 500 credits/mo with the option to buy more. Credit pack model suits the storm-chasing pattern (storm hits → buy credits → blast the neighborhood). TCPA/DNC compliance layer must ship with this feature — DNC scrub, quiet hours enforcement, STOP opt-out handling, state-level risk flags (FL/CA). Hail-specific personalization in the message body ("A 1.5\" hailstone hit your block on March 14") for higher conversion.
 
-- [ ] **Claim window countdown by state** — each state has a different statute of limitations (TX: 2yr, FL: 3yr, CO: 2yr, etc.). Auto-detect state from lead address and show the exact deadline date ("47 days left to file") rather than just hot/fileable/expired. Turns the app into a closing tool, not just a data tool.
+- [x] **Claim window countdown by state** ✅ — each state has a different statute of limitations (TX: 2yr, FL: 3yr, CO: 2yr, etc.). Auto-detect state from lead address and show the exact deadline date ("47 days left to file") rather than just hot/fileable/expired. Turns the app into a closing tool, not just a data tool.
 
 - [ ] **AI roof condition pre-screening** — use satellite imagery (already on the map) to let roofers visually flag roof condition before calling, and eventually auto-score visible storm damage with a lightweight ML model. Undercuts EagleView ($40+/report) dramatically.
 
@@ -45,4 +45,4 @@
 
 - [ ] **Neighborhood saturation tracking** — show which streets your team has already contacted so reps don't reach out to the same households twice. Shared across team accounts.
 
-- [ ] **Canvassing route optimizer** — GPS-optimized driving/walking order through saved leads. Lower priority — StormLead is a pho
+- [ ] **Canvassing route optimizer** — GPS-optimized driving/walking order through saved leads. Lower priority — StormLead 

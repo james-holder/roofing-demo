@@ -548,7 +548,10 @@ function buildRow(lead) {
         '<td class="hidden sm:table-cell">' + nm + '</td>' +
         '<td class="hidden sm:table-cell whitespace-nowrap">' + ph + '</td>' +
         '<td class="hidden md:table-cell whitespace-nowrap">' + hailCell + '</td>' +
-        '<td class="hidden md:table-cell whitespace-nowrap">' + escapeHtml(lead.lastStormDate) + '</td>' +
+        '<td class="hidden md:table-cell whitespace-nowrap">' +
+            escapeHtml(lead.lastStormDate || '') +
+            (lead.lastStormDate ? '<br>' + buildClaimBadge(lead.lastStormDate, lead.address) : '') +
+        '</td>' +
         '<td class="hidden lg:table-cell whitespace-nowrap">' + (lead.yearBuilt ? lead.yearBuilt : '<span class="text-slate-600 italic text-xs">-</span>') + '</td>' +
         '<td class="hidden xl:table-cell">' + em + '</td>' +
         statusCell +
@@ -723,7 +726,9 @@ function buildMobileCard(lead) {
         return '<span><i class="fa-solid fa-cloud-bolt mr-1 text-orange-400"></i>' + escapeHtml(lead.hailSize) +
                (hl ? ' <span class="' + hl.cls + '">(' + hl.label + ')</span>' : '') + '</span>';
     })() : '';
-    const dateBit = (lead.lastStormDate && lead.lastStormDate !== 'No data') ? '<span><i class="fa-solid fa-calendar mr-1 text-slate-500"></i>' + escapeHtml(lead.lastStormDate) + '</span>' : '';
+    const dateBit = (lead.lastStormDate && lead.lastStormDate !== 'No data')
+        ? '<span><i class="fa-solid fa-calendar mr-1 text-slate-500"></i>' + escapeHtml(lead.lastStormDate) + ' ' + buildClaimBadge(lead.lastStormDate, lead.address) + '</span>'
+        : '';
     const yearBit = lead.yearBuilt ? '<span><i class="fa-solid fa-house mr-1 text-slate-500"></i>Built ' + lead.yearBuilt + '</span>' : '';
 
     const enrichedBadge = lead.isEnriched ? '<span class="text-xs text-green-400 font-semibold"><i class="fa-solid fa-check-circle mr-1"></i>Enriched</span>' : '';
@@ -791,8 +796,4 @@ function showToast(msg, success) {
     if (_toastTimer) clearTimeout(_toastTimer);
     toast.className = success ? 'success' : 'error';
     document.getElementById('toastIcon').className = 'fa-solid ' + (success ? 'fa-circle-check' : 'fa-circle-xmark');
-    document.getElementById('toastMsg').textContent = msg;
-    toast.offsetHeight;
-    toast.classList.add('show');
-    _toastTimer = setTimeout(function() { toast.classList.remove('show'); }, 3500);
-}
+ 
