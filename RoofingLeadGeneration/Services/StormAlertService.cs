@@ -145,6 +145,7 @@ namespace RoofingLeadGeneration.Services
                     db.SentAlerts.Add(new SentAlert
                     {
                         UserId         = area.UserId,
+                        OrgId          = area.OrgId,
                         WatchedAreaId  = area.Id,
                         EventDate      = ev.Date.Date,
                         HailSizeInches = ev.SizeInches,
@@ -232,8 +233,4 @@ namespace RoofingLeadGeneration.Services
                     </div>
                   </div>
                 </body>
-                </html>
-                """;
-        }
-    }
-}
+          

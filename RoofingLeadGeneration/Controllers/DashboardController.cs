@@ -17,6 +17,9 @@ namespace RoofingLeadGeneration.Controllers
         private long? CurrentUserId =>
             long.TryParse(User.FindFirst("user_db_id")?.Value, out var id) ? id : null;
 
+        private long? CurrentOrgId =>
+            long.TryParse(User.FindFirst("user_org_id")?.Value, out var id) ? id : null;
+
         private bool IsAdmin() =>
             (User.FindFirst(ClaimTypes.Email)?.Value ?? "") == "jaholder78@gmail.com";
 
@@ -24,11 +27,12 @@ namespace RoofingLeadGeneration.Controllers
         [HttpGet]
         public async Task<IActionResult> Index()
         {
+            var orgId  = CurrentOrgId;
             var userId = CurrentUserId;
             var now    = DateTime.UtcNow;
             var som    = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
-            var leadsQ       = _db.Leads.Where(l => l.UserId == userId || l.UserId == null);
+            var leadsQ       = _db.Leads.Where(l => l.OrgId == orgId || l.OrgId == null);
             var enrichmentsQ = _db.Enrichments.Where(e => e.UserId == userId);
 
             ViewBag.UserName           = User.Identity?.Name ?? "Guest";
@@ -61,8 +65,4 @@ namespace RoofingLeadGeneration.Controllers
 
             ViewBag.RecentEnrich = rawEnrich
                 .Select(e => (
-                    Address:   e.Address   ?? "",
-                    Status:    e.Status    ?? "",
-                    CreatedAt: e.CreatedAt.ToString("o")
-                ))
-               
+                    Address

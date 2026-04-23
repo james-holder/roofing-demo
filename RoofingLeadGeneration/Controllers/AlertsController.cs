@@ -26,6 +26,9 @@ namespace RoofingLeadGeneration.Controllers
         private long? CurrentUserId =>
             long.TryParse(User.FindFirst("user_db_id")?.Value, out var id) ? id : null;
 
+        private long? CurrentOrgId =>
+            long.TryParse(User.FindFirst("user_org_id")?.Value, out var id) ? id : null;
+
         // ── GET /Alerts ───────────────────────────────────────────────────────
         [HttpGet("")]
         public IActionResult Index() => View();
@@ -34,9 +37,9 @@ namespace RoofingLeadGeneration.Controllers
         [HttpGet("List")]
         public async Task<IActionResult> List()
         {
-            var userId = CurrentUserId;
+            var orgId = CurrentOrgId;
             var areas  = await _db.WatchedAreas
-                .Where(w => w.UserId == userId || w.UserId == null)
+                .Where(w => w.OrgId == orgId || w.OrgId == null)
                 .OrderByDescending(w => w.CreatedAt)
                 .Select(w => new {
                     w.Id, w.Label, w.CenterLat, w.CenterLng,
@@ -65,6 +68,7 @@ namespace RoofingLeadGeneration.Controllers
             var area = new WatchedArea
             {
                 UserId            = CurrentUserId,
+                OrgId             = CurrentOrgId,
                 Label             = geo.FormattedAddress,
                 CenterLat         = geo.Lat,
                 CenterLng         = geo.Lng,
@@ -87,9 +91,9 @@ namespace RoofingLeadGeneration.Controllers
         [HttpPatch("{id:long}")]
         public async Task<IActionResult> Update(long id, [FromBody] UpdateWatchedAreaRequest req)
         {
-            var userId = CurrentUserId;
-            var area   = await _db.WatchedAreas.FirstOrDefaultAsync(
-                w => w.Id == id && (w.UserId == userId || w.UserId == null));
+            var orgId = CurrentOrgId;
+            var area  = await _db.WatchedAreas.FirstOrDefaultAsync(
+                w => w.Id == id && (w.OrgId == orgId || w.OrgId == null));
 
             if (area == null) return NotFound();
 
@@ -105,9 +109,9 @@ namespace RoofingLeadGeneration.Controllers
         [HttpDelete("{id:long}")]
         public async Task<IActionResult> Delete(long id)
         {
-            var userId = CurrentUserId;
-            var area   = await _db.WatchedAreas.FirstOrDefaultAsync(
-                w => w.Id == id && (w.UserId == userId || w.UserId == null));
+            var orgId = CurrentOrgId;
+            var area  = await _db.WatchedAreas.FirstOrDefaultAsync(
+                w => w.Id == id && (w.OrgId == orgId || w.OrgId == null));
 
             if (area == null) return NotFound();
 
@@ -148,6 +152,4 @@ namespace RoofingLeadGeneration.Controllers
                         <table style="width:100%;font-size:14px;">
                             <tr><td style="color:#64748b;padding:4px 0;">Watch Area</td><td style="text-align:right;color:#f1f5f9;font-weight:600;">Dallas, TX (10-mile radius)</td></tr>
                             <tr><td style="color:#64748b;padding:4px 0;">Hail Size</td><td style="text-align:right;color:#f97316;font-weight:700;">1.75" ⛳ Golf Ball</td></tr>
-                            <tr><td style="color:#64748b;padding:4px 0;">Event Date</td><td style="text-align:right;color:#f1f5f9;">{DateTime.UtcNow:MMMM d, yyyy}</td></tr>
-                        </table>
-                    </div
+                            <tr><td style="color:#64748b;padding:4px 0

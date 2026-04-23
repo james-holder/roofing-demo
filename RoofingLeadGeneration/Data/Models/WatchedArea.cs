@@ -4,6 +4,7 @@ namespace RoofingLeadGeneration.Data.Models
     {
         public long     Id                { get; set; }
         public long?    UserId            { get; set; }
+        public long?    OrgId             { get; set; }
         public string   Label             { get; set; } = "";   // e.g. "Dallas, TX"
         public double   CenterLat         { get; set; }
         public double   CenterLng         { get; set; }
@@ -14,6 +15,4 @@ namespace RoofingLeadGeneration.Data.Models
 
         // Nav
         public User?              User       { get; set; }
-        public List<SentAlert>    SentAlerts { get; set; } = new();
-    }
-}
+        public List<

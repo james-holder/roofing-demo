@@ -1,11 +1,14 @@
 using Microsoft.EntityFrameworkCore;
-using RoofingLeadGeneration.Data.Models;
 
 namespace RoofingLeadGeneration.Data
 {
+    using RoofingLeadGeneration.Data.Models;
+
     public class AppDbContext : DbContext
     {
         public DbSet<User>         Users        => Set<User>();
+        public DbSet<Org>          Orgs         => Set<Org>();
+        public DbSet<OrgInvite>    OrgInvites   => Set<OrgInvite>();
         public DbSet<Lead>         Leads        => Set<Lead>();
         public DbSet<Enrichment>   Enrichments  => Set<Enrichment>();
         public DbSet<LeadContact>  LeadContacts => Set<LeadContact>();
@@ -16,6 +19,48 @@ namespace RoofingLeadGeneration.Data
 
         protected override void OnModelCreating(ModelBuilder m)
         {
+            // ── Org ──────────────────────────────────────────────────────
+            m.Entity<Org>(e =>
+            {
+                e.ToTable("orgs");
+                e.HasKey(o => o.Id);
+                e.Property(o => o.Id).HasColumnName("id");
+                e.Property(o => o.Name).HasColumnName("name").IsRequired();
+                e.Property(o => o.OwnerId).HasColumnName("owner_id");
+                e.Property(o => o.Plan).HasColumnName("plan").HasDefaultValue("free");
+                e.Property(o => o.CreatedAt).HasColumnName("created_at")
+                 .HasDefaultValueSql("datetime('now')");
+
+                e.HasOne(o => o.Owner)
+                 .WithMany()
+                 .HasForeignKey(o => o.OwnerId)
+                 .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            // ── OrgInvite ─────────────────────────────────────────────────
+            m.Entity<OrgInvite>(e =>
+            {
+                e.ToTable("org_invites");
+                e.HasKey(i => i.Id);
+                e.Property(i => i.Id).HasColumnName("id");
+                e.Property(i => i.OrgId).HasColumnName("org_id");
+                e.Property(i => i.Email).HasColumnName("email").IsRequired();
+                e.Property(i => i.Token).HasColumnName("token").IsRequired();
+                e.Property(i => i.Role).HasColumnName("role").HasDefaultValue("rep");
+                e.Property(i => i.ExpiresAt).HasColumnName("expires_at");
+                e.Property(i => i.AcceptedAt).HasColumnName("accepted_at");
+                e.Property(i => i.CreatedAt).HasColumnName("created_at")
+                 .HasDefaultValueSql("datetime('now')");
+
+                e.HasIndex(i => i.Token).IsUnique();
+                e.HasIndex(i => i.OrgId);
+
+                e.HasOne(i => i.Org)
+                 .WithMany(o => o.Invites)
+                 .HasForeignKey(i => i.OrgId)
+                 .OnDelete(DeleteBehavior.Cascade);
+            });
+
             // ── User ─────────────────────────────────────────────────────
             m.Entity<User>(e =>
             {
@@ -29,8 +74,16 @@ namespace RoofingLeadGeneration.Data
                 e.Property(u => u.CreatedAt).HasColumnName("created_at")
                  .HasDefaultValueSql("datetime('now')");
                 e.Property(u => u.IsAdmin).HasColumnName("is_admin").HasDefaultValue(false);
+                e.Property(u => u.OrgId).HasColumnName("org_id");
+                e.Property(u => u.OrgRole).HasColumnName("org_role").HasDefaultValue("owner");
 
                 e.HasIndex(u => new { u.Provider, u.ProviderId }).IsUnique();
+                e.HasIndex(u => u.OrgId);
+
+                e.HasOne(u => u.Org)
+                 .WithMany(o => o.Members)
+                 .HasForeignKey(u => u.OrgId)
+                 .OnDelete(DeleteBehavior.SetNull);
             });
 
             // ── Lead ─────────────────────────────────────────────────────
@@ -57,11 +110,13 @@ namespace RoofingLeadGeneration.Data
                 e.Property(l => l.OwnerPhone).HasColumnName("owner_phone");
                 e.Property(l => l.OwnerEmail).HasColumnName("owner_email");
                 e.Property(l => l.UserId).HasColumnName("user_id");
+                e.Property(l => l.OrgId).HasColumnName("org_id");
+                e.Property(l => l.AssignedToUserId).HasColumnName("assigned_to_user_id");
                 e.Property(l => l.IsEnriched).HasColumnName("is_enriched").HasDefaultValue(false);
                 e.Property(l => l.DeletedAt).HasColumnName("deleted_at");
                 e.Property(l => l.Status).HasColumnName("status").HasDefaultValue("new");
 
-                e.HasIndex(l => l.Address).IsUnique();
+                e.HasIndex(l => new { l.OrgId, l.Address }).IsUnique();
                 e.HasIndex(l => l.RiskLevel);
 
                 e.HasOne(l => l.User)
@@ -118,61 +173,4 @@ namespace RoofingLeadGeneration.Data
                  .OnDelete(DeleteBehavior.SetNull);
 
                 e.HasOne(en => en.Lead)
-                 .WithMany(l => l.Enrichments)
-                 .HasForeignKey(en => en.LeadId)
-                 .OnDelete(DeleteBehavior.SetNull);
-            });
-
-            // ── WatchedArea ──────────────────────────────────────────────
-            m.Entity<WatchedArea>(e =>
-            {
-                e.ToTable("watched_areas");
-                e.HasKey(w => w.Id);
-                e.Property(w => w.Id).HasColumnName("id");
-                e.Property(w => w.UserId).HasColumnName("user_id");
-                e.Property(w => w.Label).HasColumnName("label").IsRequired();
-                e.Property(w => w.CenterLat).HasColumnName("center_lat");
-                e.Property(w => w.CenterLng).HasColumnName("center_lng");
-                e.Property(w => w.RadiusMiles).HasColumnName("radius_miles").HasDefaultValue(10.0);
-                e.Property(w => w.MinHailSizeInches).HasColumnName("min_hail_size_inches").HasDefaultValue(1.0);
-                e.Property(w => w.AlertsEnabled).HasColumnName("alerts_enabled").HasDefaultValue(true);
-                e.Property(w => w.CreatedAt).HasColumnName("created_at")
-                 .HasDefaultValueSql("datetime('now')");
-
-                e.HasIndex(w => w.UserId);
-
-                e.HasOne(w => w.User)
-                 .WithMany(u => u.WatchedAreas)
-                 .HasForeignKey(w => w.UserId)
-                 .OnDelete(DeleteBehavior.Cascade);
-            });
-
-            // ── SentAlert ────────────────────────────────────────────────
-            m.Entity<SentAlert>(e =>
-            {
-                e.ToTable("sent_alerts");
-                e.HasKey(s => s.Id);
-                e.Property(s => s.Id).HasColumnName("id");
-                e.Property(s => s.UserId).HasColumnName("user_id");
-                e.Property(s => s.WatchedAreaId).HasColumnName("watched_area_id");
-                e.Property(s => s.EventDate).HasColumnName("event_date");
-                e.Property(s => s.HailSizeInches).HasColumnName("hail_size_inches");
-                e.Property(s => s.SentAt).HasColumnName("sent_at")
-                 .HasDefaultValueSql("datetime('now')");
-
-                e.HasIndex(s => new { s.WatchedAreaId, s.EventDate }).IsUnique();
-                e.HasIndex(s => s.UserId);
-
-                e.HasOne(s => s.User)
-                 .WithMany(u => u.SentAlerts)
-                 .HasForeignKey(s => s.UserId)
-                 .OnDelete(DeleteBehavior.Cascade);
-
-                e.HasOne(s => s.WatchedArea)
-                 .WithMany(w => w.SentAlerts)
-                 .HasForeignKey(s => s.WatchedAreaId)
-                 .OnDelete(DeleteBehavior.Cascade);
-            });
-        }
-    }
-}
+      

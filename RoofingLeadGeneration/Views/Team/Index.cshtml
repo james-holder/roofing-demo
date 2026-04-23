@@ -1,0 +1,359 @@
+@{
+    var orgName   = ViewBag.OrgName  as string ?? "My Company";
+    var orgPlan   = ViewBag.OrgPlan  as string ?? "free";
+    var orgRole   = ViewBag.OrgRole  as string ?? "rep";
+    var isOwner   = (bool)(ViewBag.IsOwner  ?? false);
+    var canManage = (bool)(ViewBag.CanManage ?? false);
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Team — StormLead Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: { extend: { colors: {
+                brand: '#f97316',
+                navy:  { DEFAULT: '#0f172a', 700: '#1e293b', 600: '#334155', 500: '#475569' }
+            }}}
+        }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body class="bg-navy text-slate-100 min-h-screen">
+
+<!-- ── Nav ─────────────────────────────────────────────────────────────── -->
+<header class="sticky top-0 z-50 bg-navy border-b border-slate-700/60 shadow-lg relative">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
+        <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 bg-brand rounded-lg flex items-center justify-center shadow">
+                <i class="fa-solid fa-house-chimney text-white text-sm"></i>
+            </div>
+            <span class="text-lg font-bold tracking-tight">
+                Storm<span class="text-brand">Lead</span> Pro
+            </span>
+        </div>
+        <nav class="hidden lg:flex items-center gap-6 text-sm text-slate-400">
+            <a href="/" class="hover:text-white transition-colors">Search</a>
+            <a href="/Leads/Saved" class="hover:text-white transition-colors">Saved Leads</a>
+            <a href="/Alerts" class="hover:text-white transition-colors">Alerts</a>
+            <a href="/Dashboard" class="hover:text-white transition-colors">Dashboard</a>
+            <a href="/Team" class="text-white font-semibold transition-colors">Team</a>
+            <span class="text-slate-600">|</span>
+            @if (User.Identity?.IsAuthenticated == true) {
+                <span class="text-slate-300 text-xs"><i class="fa-solid fa-circle-user mr-1 text-brand"></i>@User.Identity.Name</span>
+                <a href="/Auth/Logout" class="text-slate-500 hover:text-slate-300 text-xs transition-colors">Sign out</a>
+            } else {
+                <a href="/Auth/Login" class="px-3 py-1 rounded-full bg-brand/10 text-brand border border-brand/30 text-xs font-semibold hover:bg-brand/20 transition-colors">
+                    <i class="fa-solid fa-right-to-bracket mr-1"></i>Sign In
+                </a>
+            }
+        </nav>
+        <button id="mobileMenuBtn" onclick="toggleMobileMenu()" class="lg:hidden p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700/60 transition-colors">
+            <i id="mobileMenuIcon" class="fa-solid fa-bars text-lg"></i>
+        </button>
+    </div>
+    <div id="mobileMenu" class="hidden lg:hidden absolute top-full left-0 right-0 bg-navy border-t border-slate-700/60 shadow-2xl z-50 px-4 py-3 flex flex-col gap-1">
+        <a href="/" class="flex items-center gap-3 px-3 py-3 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/60 transition-colors text-sm"><i class="fa-solid fa-magnifying-glass w-4 text-center text-xs"></i>Search</a>
+        <a href="/Leads/Saved" class="flex items-center gap-3 px-3 py-3 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/60 transition-colors text-sm"><i class="fa-solid fa-bookmark w-4 text-center text-xs"></i>Saved Leads</a>
+        <a href="/Alerts" class="flex items-center gap-3 px-3 py-3 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/60 transition-colors text-sm"><i class="fa-solid fa-bell w-4 text-center text-xs"></i>Alerts</a>
+        <a href="/Dashboard" class="flex items-center gap-3 px-3 py-3 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/60 transition-colors text-sm"><i class="fa-solid fa-chart-bar w-4 text-center text-xs"></i>Dashboard</a>
+        <a href="/Team" class="flex items-center gap-3 px-3 py-3 rounded-xl bg-slate-700/60 text-white font-semibold text-sm"><i class="fa-solid fa-users w-4 text-center text-xs text-brand"></i>Team</a>
+    </div>
+</header>
+
+<!-- ── Page ─────────────────────────────────────────────────────────────── -->
+<main class="max-w-4xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold text-white mb-1">
+                <i class="fa-solid fa-users text-brand mr-2"></i>Team
+            </h1>
+            <p class="text-slate-400 text-sm">
+                Manage who has access to <span class="text-slate-200 font-medium">@orgName</span>.
+                Your plan: <span id="planBadge" class="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-brand/20 text-brand border border-brand/30 uppercase">@orgPlan</span>
+            </p>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="hidden fixed bottom-5 right-5 z-50 px-4 py-3 rounded-xl text-sm font-medium shadow-xl transition-all"></div>
+
+    <!-- ── Invite Form (owners + managers only) ──────────────────── -->
+    @if (canManage) {
+    <section class="bg-navy-700 border border-slate-700/60 rounded-2xl p-6">
+        <h2 class="text-base font-semibold text-white mb-4">
+            <i class="fa-solid fa-user-plus text-brand mr-2"></i>Invite a Team Member
+        </h2>
+        <div class="flex flex-col sm:flex-row gap-3">
+            <input id="inviteEmail" type="email" placeholder="colleague@example.com"
+                class="flex-1 bg-navy border border-slate-600 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-brand/60 focus:ring-1 focus:ring-brand/30" />
+            @if (isOwner) {
+            <select id="inviteRole"
+                class="bg-navy border border-slate-600 rounded-xl px-4 py-2.5 text-sm text-slate-300 focus:outline-none focus:border-brand/60">
+                <option value="rep">Rep</option>
+                <option value="manager">Manager</option>
+            </select>
+            } else {
+            <input type="hidden" id="inviteRole" value="rep" />
+            }
+            <button onclick="sendInvite()"
+                class="px-5 py-2.5 rounded-xl bg-brand hover:bg-brand/90 text-white text-sm font-semibold transition whitespace-nowrap">
+                <i class="fa-solid fa-paper-plane mr-1.5"></i>Send Invite
+            </button>
+        </div>
+        <p id="inviteNote" class="mt-2 text-xs text-slate-500">
+            They'll receive an email with a link to join your team. Invites expire in 7 days.
+        </p>
+    </section>
+    }
+
+    <!-- ── Members ───────────────────────────────────────────────── -->
+    <section class="bg-navy-700 border border-slate-700/60 rounded-2xl overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-700/60 flex items-center justify-between">
+            <h2 class="text-base font-semibold text-white">
+                <i class="fa-solid fa-circle-user text-brand mr-2"></i>Members
+                <span id="memberCount" class="ml-2 text-xs text-slate-500 font-normal"></span>
+            </h2>
+        </div>
+        <div id="memberList" class="divide-y divide-slate-700/40">
+            <div class="px-6 py-8 text-center text-slate-500 text-sm">
+                <i class="fa-solid fa-circle-notch fa-spin mr-2"></i>Loading…
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Pending Invites ───────────────────────────────────────── -->
+    @if (canManage) {
+    <section id="invitesSection" class="bg-navy-700 border border-slate-700/60 rounded-2xl overflow-hidden">
+        <div class="px-6 py-4 border-b border-slate-700/60">
+            <h2 class="text-base font-semibold text-white">
+                <i class="fa-solid fa-envelope-open-text text-brand mr-2"></i>Pending Invites
+                <span id="inviteCount" class="ml-2 text-xs text-slate-500 font-normal"></span>
+            </h2>
+        </div>
+        <div id="inviteList" class="divide-y divide-slate-700/40">
+            <div class="px-6 py-8 text-center text-slate-500 text-sm">
+                <i class="fa-solid fa-circle-notch fa-spin mr-2"></i>Loading…
+            </div>
+        </div>
+    </section>
+    }
+
+</main>
+
+<script>
+const isOwner   = @(isOwner   ? "true" : "false");
+const canManage = @(canManage ? "true" : "false");
+
+function toggleMobileMenu() {
+    const menu = document.getElementById('mobileMenu');
+    const icon = document.getElementById('mobileMenuIcon');
+    const open = menu.classList.toggle('hidden') === false;
+    icon.className = open ? 'fa-solid fa-xmark text-lg' : 'fa-solid fa-bars text-lg';
+}
+
+function showToast(msg, ok = true) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `fixed bottom-5 right-5 z-50 px-4 py-3 rounded-xl text-sm font-medium shadow-xl transition-all ${ok ? 'bg-green-900/90 border border-green-700 text-green-200' : 'bg-red-900/90 border border-red-700 text-red-200'}`;
+    t.classList.remove('hidden');
+    setTimeout(() => t.classList.add('hidden'), 4000);
+}
+
+function roleBadge(role) {
+    const colors = {
+        owner:   'bg-brand/20 text-brand border-brand/30',
+        manager: 'bg-purple-900/40 text-purple-300 border-purple-700/40',
+        rep:     'bg-slate-700/60 text-slate-300 border-slate-600'
+    };
+    const c = colors[role] || colors.rep;
+    return `<span class="px-2 py-0.5 rounded-full text-xs font-semibold border ${c} capitalize">${role}</span>`;
+}
+
+async function loadMembers() {
+    try {
+        const res  = await fetch('/Team/Members');
+        const list = await res.json();
+        const el   = document.getElementById('memberList');
+        document.getElementById('memberCount').textContent = `(${list.length})`;
+
+        if (!list.length) {
+            el.innerHTML = '<div class="px-6 py-8 text-center text-slate-500 text-sm">No members found.</div>';
+            return;
+        }
+
+        el.innerHTML = list.map(m => `
+            <div class="px-6 py-4 flex items-center gap-4" id="member-${m.id}">
+                <div class="w-9 h-9 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 shrink-0">
+                    <i class="fa-solid fa-circle-user"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-sm font-medium text-white">${esc(m.name)}</span>
+                        ${m.isMe ? '<span class="text-xs text-slate-500">(you)</span>' : ''}
+                        ${roleBadge(m.role)}
+                    </div>
+                    <div class="text-xs text-slate-500 mt-0.5">${esc(m.email)}</div>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    ${isOwner && !m.isMe && m.role !== 'owner' ? `
+                    <select onchange="updateRole(${m.id}, this.value)"
+                        class="bg-navy border border-slate-600 rounded-lg px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-brand/60">
+                        <option value="rep"     ${m.role === 'rep'     ? 'selected' : ''}>Rep</option>
+                        <option value="manager" ${m.role === 'manager' ? 'selected' : ''}>Manager</option>
+                    </select>
+                    <button onclick="removeMember(${m.id}, '${esc(m.name)}')"
+                        class="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition text-xs" title="Remove from team">
+                        <i class="fa-solid fa-user-minus"></i>
+                    </button>` : ''}
+                </div>
+            </div>
+        `).join('');
+    } catch(e) {
+        document.getElementById('memberList').innerHTML =
+            '<div class="px-6 py-6 text-center text-red-400 text-sm">Failed to load members.</div>';
+    }
+}
+
+async function loadInvites() {
+    if (!canManage) return;
+    try {
+        const res  = await fetch('/Team/Invites');
+        const list = await res.json();
+        const el   = document.getElementById('inviteList');
+        document.getElementById('inviteCount').textContent = `(${list.length})`;
+
+        if (!list.length) {
+            el.innerHTML = '<div class="px-6 py-8 text-center text-slate-500 text-sm">No pending invites.</div>';
+            return;
+        }
+
+        el.innerHTML = list.map(i => `
+            <div class="px-6 py-4 flex items-center gap-4" id="invite-${i.id}">
+                <div class="w-9 h-9 rounded-full bg-slate-700/60 flex items-center justify-center text-slate-500 shrink-0">
+                    <i class="fa-solid fa-envelope text-sm"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-sm font-medium text-slate-200">${esc(i.email)}</span>
+                        ${roleBadge(i.role)}
+                    </div>
+                    <div class="text-xs text-slate-500 mt-0.5">Expires ${esc(i.expiresAt)}</div>
+                </div>
+                <button onclick="revokeInvite(${i.id}, '${esc(i.email)}')"
+                    class="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-900/20 transition text-xs shrink-0" title="Revoke invite">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        `).join('');
+    } catch(e) {
+        document.getElementById('inviteList').innerHTML =
+            '<div class="px-6 py-6 text-center text-red-400 text-sm">Failed to load invites.</div>';
+    }
+}
+
+async function sendInvite() {
+    const email = document.getElementById('inviteEmail').value.trim();
+    const role  = document.getElementById('inviteRole').value;
+    if (!email) { showToast('Enter an email address.', false); return; }
+
+    const btn = document.querySelector('button[onclick="sendInvite()"]');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1.5"></i>Sending…';
+
+    try {
+        const res  = await fetch('/Team/Invite', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, role })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message || 'Invite sent!');
+            document.getElementById('inviteEmail').value = '';
+            if (data.acceptUrl) {
+                document.getElementById('inviteNote').innerHTML =
+                    `<span class="text-yellow-400">SMTP not configured — share this link manually:</span> <a href="${data.acceptUrl}" class="text-brand underline break-all">${data.acceptUrl}</a>`;
+            }
+            loadInvites();
+        } else {
+            showToast(data.error || 'Failed to send invite.', false);
+        }
+    } catch(e) {
+        showToast('Network error. Try again.', false);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-paper-plane mr-1.5"></i>Send Invite';
+    }
+}
+
+async function removeMember(id, name) {
+    if (!confirm(`Remove ${name} from your team?`)) return;
+    try {
+        const res = await fetch(`/Team/Members/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+            document.getElementById(`member-${id}`)?.remove();
+            showToast(`${name} removed from your team.`);
+            loadMembers(); // refresh count
+        } else {
+            const d = await res.json();
+            showToast(d.error || 'Could not remove member.', false);
+        }
+    } catch(e) {
+        showToast('Network error.', false);
+    }
+}
+
+async function updateRole(id, role) {
+    try {
+        const res = await fetch(`/Team/Members/${id}/Role`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role })
+        });
+        if (res.ok) {
+            showToast('Role updated.');
+        } else {
+            const d = await res.json();
+            showToast(d.error || 'Could not update role.', false);
+            loadMembers(); // revert UI
+        }
+    } catch(e) {
+        showToast('Network error.', false);
+        loadMembers();
+    }
+}
+
+async function revokeInvite(id, email) {
+    if (!confirm(`Revoke invite for ${email}?`)) return;
+    try {
+        const res = await fetch(`/Team/Invites/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+            document.getElementById(`invite-${id}`)?.remove();
+            showToast('Invite revoked.');
+            loadInvites(); // refresh count
+        } else {
+            const d = await res.json();
+            showToast(d.error || 'Could not revoke invite.', false);
+        }
+    } catch(e) {
+        showToast('Network error.', false);
+    }
+}
+
+function esc(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+loadMembers();
+loadInvites();
+</script>
+</body>
+</html>

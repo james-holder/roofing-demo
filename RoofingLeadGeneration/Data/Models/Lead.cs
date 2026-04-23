@@ -19,14 +19,13 @@ namespace RoofingLeadGeneration.Data.Models
         public string? OwnerName       { get; set; }
         public string? OwnerPhone      { get; set; }
         public string? OwnerEmail      { get; set; }
-        public long?     UserId          { get; set; }
-        public bool      IsEnriched      { get; set; } = false;
+        public long?     UserId             { get; set; }
+        public long?     OrgId              { get; set; }
+        public long?     AssignedToUserId   { get; set; }
+        public bool      IsEnriched         { get; set; } = false;
         public DateTime? DeletedAt       { get; set; }
         /// <summary>Pipeline status: new | contacted | appointment_set | closed_won | closed_lost</summary>
         public string    Status          { get; set; } = "new";
 
         public User?                     User        { get; set; }
-        public ICollection<Enrichment>   Enrichments { get; set; } = new List<Enrichment>();
-        public ICollection<LeadContact>  Contacts    { get; set; } = new List<LeadContact>();
-    }
-}
+        public ICollection<Enrichment>   Enrichments { get; set; } = new 

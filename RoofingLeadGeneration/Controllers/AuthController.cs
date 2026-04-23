@@ -161,9 +161,7 @@ namespace RoofingLeadGeneration.Controllers
             var user = await _db.Users.FirstOrDefaultAsync(
                 u => u.Provider == provider && u.ProviderId == providerId);
 
-            if (user != null) return user.Id;
-
-            user = new User
+            if (user != null)
             {
-                Provider    = provider,
-             
+                // Backfill org for any existing user who doesn't have one yet
+                if 

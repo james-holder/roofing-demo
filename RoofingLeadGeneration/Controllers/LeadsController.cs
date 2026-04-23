@@ -25,6 +25,9 @@ namespace RoofingLeadGeneration.Controllers
         private long? CurrentUserId =>
             long.TryParse(User.FindFirst("user_db_id")?.Value, out var id) ? id : null;
 
+        private long? CurrentOrgId =>
+            long.TryParse(User.FindFirst("user_org_id")?.Value, out var id) ? id : null;
+
         // ── GET /Leads/Saved → HTML page ────────────────────────────
         [HttpGet("Saved")]
         public IActionResult Saved() => View();
@@ -33,7 +36,7 @@ namespace RoofingLeadGeneration.Controllers
         [HttpGet]
         public async Task<IActionResult> Index(string tab = "unenriched")
         {
-            var userId = CurrentUserId;
+            var orgId = CurrentOrgId;
 
             var activeStatuses = new[] { "new", "contacted", "appointment_set" };
             var closedStatuses = new[] { "closed_won", "closed_lost" };
@@ -42,12 +45,12 @@ namespace RoofingLeadGeneration.Controllers
             if (tab == "archived")
             {
                 query = _db.Leads
-                    .Where(l => (l.UserId == userId || l.UserId == null) && l.DeletedAt != null);
+                    .Where(l => (l.OrgId == orgId || l.OrgId == null) && l.DeletedAt != null);
             }
             else
             {
                 query = _db.Leads
-                    .Where(l => (l.UserId == userId || l.UserId == null) && l.DeletedAt == null);
+                    .Where(l => (l.OrgId == orgId || l.OrgId == null) && l.DeletedAt == null);
                 query = tab switch
                 {
                     "pipeline" => query.Where(l => l.IsEnriched && activeStatuses.Contains(l.Status)),
@@ -85,6 +88,7 @@ namespace RoofingLeadGeneration.Controllers
                 return BadRequest(new { error = "No properties provided." });
 
             var userId = CurrentUserId;
+            var orgId  = CurrentOrgId;
             int saved = 0, updated = 0;
 
             foreach (var p in req.Properties)
@@ -107,6 +111,7 @@ namespace RoofingLeadGeneration.Controllers
                     existing.SourceAddress   = req.SourceAddress;
                     existing.SavedAt         = DateTime.UtcNow;
                     existing.UserId          = userId;
+                    existing.OrgId           = orgId;
                     updated++;
                 }
                 else
@@ -124,7 +129,8 @@ namespace RoofingLeadGeneration.Controllers
                         PropertyType    = p.PropertyType,
                         SourceAddress   = req.SourceAddress,
                         SavedAt         = DateTime.UtcNow,
-                        UserId          = userId
+                        UserId          = userId,
+                        OrgId           = orgId
                     });
                     saved++;
                 }
@@ -166,10 +172,10 @@ namespace RoofingLeadGeneration.Controllers
             if (req?.Ids == null || req.Ids.Length == 0)
                 return BadRequest(new { error = "No lead IDs provided." });
 
-            var userId = CurrentUserId;
+            var orgId  = CurrentOrgId;
             var leads  = await _db.Leads
                 .Where(l => req.Ids.Contains(l.Id) &&
-                            (l.UserId == userId || l.UserId == null) &&
+                            (l.OrgId == orgId || l.OrgId == null) &&
                             !l.IsEnriched && l.DeletedAt == null)
                 .ToListAsync();
 
@@ -187,9 +193,9 @@ namespace RoofingLeadGeneration.Controllers
         [HttpPatch("{id:long}/Notes")]
         public async Task<IActionResult> PatchNotes(long id, [FromBody] PatchNotesRequest req)
         {
-            var userId = CurrentUserId;
-            var lead   = await _db.Leads.FindAsync(id);
-            if (lead == null || (lead.UserId != userId && lead.UserId != null))
+            var orgId = CurrentOrgId;
+            var lead  = await _db.Leads.FindAsync(id);
+            if (lead == null || (lead.OrgId != orgId && lead.OrgId != null))
                 return NotFound(new { error = "Lead not found." });
 
             lead.Notes = req.Notes?.Trim();
@@ -205,9 +211,9 @@ namespace RoofingLeadGeneration.Controllers
             if (!valid.Contains(req.Status))
                 return BadRequest(new { error = "Invalid status value." });
 
-            var userId = CurrentUserId;
-            var lead   = await _db.Leads.FindAsync(id);
-            if (lead == null || (lead.UserId != userId && lead.UserId != null))
+            var orgId = CurrentOrgId;
+            var lead  = await _db.Leads.FindAsync(id);
+            if (lead == null || (lead.OrgId != orgId && lead.OrgId != null))
                 return NotFound(new { error = "Lead not found." });
 
             lead.Status = req.Status;
@@ -219,9 +225,9 @@ namespace RoofingLeadGeneration.Controllers
         [HttpPost("{id:long}/Restore")]
         public async Task<IActionResult> Restore(long id)
         {
-            var userId = CurrentUserId;
-            var lead   = await _db.Leads.FindAsync(id);
-            if (lead == null || (lead.UserId != userId && lead.UserId != null))
+            var orgId = CurrentOrgId;
+            var lead  = await _db.Leads.FindAsync(id);
+            if (lead == null || (lead.OrgId != orgId && lead.OrgId != null))
                 return NotFound(new { error = "Lead not found." });
 
             lead.DeletedAt = null;
@@ -237,10 +243,10 @@ namespace RoofingLeadGeneration.Controllers
             if (req?.Ids == null || req.Ids.Length == 0)
                 return BadRequest(new { error = "No lead IDs provided." });
 
-            var userId = CurrentUserId;
+            var orgId  = CurrentOrgId;
             var leads  = await _db.Leads
                 .Where(l => req.Ids.Contains(l.Id) &&
-                            (l.UserId == userId || l.UserId == null) &&
+                            (l.OrgId == orgId || l.OrgId == null) &&
                             !l.IsEnriched && l.DeletedAt == null)
                 .ToListAsync();
 
@@ -253,7 +259,7 @@ namespace RoofingLeadGeneration.Controllers
         }
 
         // ── POST /Leads/BulkDelete ───────────────────────────
-        // Soft-deletes all matching leads owned by the current user
+        // Soft-deletes all matching leads owned by the current org
         // (enriched or not). Used by the bulk-actions toolbar.
         [HttpPost("BulkDelete")]
         public async Task<IActionResult> BulkDelete([FromBody] BulkRequest req)
@@ -261,10 +267,10 @@ namespace RoofingLeadGeneration.Controllers
             if (req?.Ids == null || req.Ids.Length == 0)
                 return BadRequest(new { error = "No lead IDs provided." });
 
-            var userId = CurrentUserId;
+            var orgId  = CurrentOrgId;
             var leads  = await _db.Leads
                 .Where(l => req.Ids.Contains(l.Id) &&
-                            (l.UserId == userId || l.UserId == null) &&
+                            (l.OrgId == orgId || l.OrgId == null) &&
                             l.DeletedAt == null)
                 .ToListAsync();
 
@@ -280,11 +286,12 @@ namespace RoofingLeadGeneration.Controllers
         [HttpGet("Stats")]
         public async Task<IActionResult> Stats()
         {
+            var orgId  = CurrentOrgId;
             var userId = CurrentUserId;
             var now    = DateTime.UtcNow;
             var som    = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
 
-            var allLeadsQ    = _db.Leads.Where(l => l.UserId == userId || l.UserId == null);
+            var allLeadsQ    = _db.Leads.Where(l => l.OrgId == orgId || l.OrgId == null);
             var activeLeadsQ = allLeadsQ.Where(l => l.DeletedAt == null);
             var enrichmentsQ = _db.Enrichments.Where(e => e.UserId == userId);
 
@@ -529,14 +536,4 @@ namespace RoofingLeadGeneration.Controllers
             [JsonPropertyName("ids")] public long[]? Ids { get; set; }
         }
 
-        public class PatchNotesRequest
-        {
-            [JsonPropertyName("notes")] public string? Notes { get; set; }
-        }
-
-        public class PatchStatusRequest
-        {
-            [JsonPropertyName("status")] public string Status { get; set; } = "new";
-        }
-    }
-}
+        public class 

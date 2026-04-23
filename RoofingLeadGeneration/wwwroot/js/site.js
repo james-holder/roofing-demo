@@ -199,13 +199,11 @@
     function buildPopupHtml(p) {
         const c = riskColor(p.riskLevel);
         let claimHtml = '';
-        if (p.claimWindowTier === 'hot' || p.claimWindowTier === 'fileable') {
-            const stormMs   = p.lastStormDate && p.lastStormDate !== 'No data'
-                                ? new Date(p.lastStormDate).getTime() : null;
-            const daysSince = stormMs ? Math.floor((Date.now() - stormMs) / 86400000) : null;
-            const daysLeft  = daysSince != null ? Math.max(0, 730 - daysSince) : null;
-            const leftLabel = daysLeft != null ? ` (~${daysLeft}d left)` : '';
-            if (p.claimWindowTier === 'hot') {
+        const _cwPopup = getClaimWindow(p.lastStormDate, p.address);
+        if (_cwPopup && !_cwPopup.expired) {
+            const leftLabel  = ` (~${_cwPopup.daysLeft}d left)`;
+            const daysSince  = _cwPopup.totalDays - _cwPopup.daysLeft;
+            if (daysSince <= 365) {
                 claimHtml = `<div style="margin-top:5px;padding:3px 8px;border-radius:6px;background:#7c2d1222;border:1px solid #f9731644;font-size:11px;font-weight:700;color:#fb923c">🔥 Hot Lead — File Now!${leftLabel}</div>`;
             } else {
                 claimHtml = `<div style="margin-top:5px;padding:3px 8px;border-radius:6px;background:#45350022;border:1px solid #ca8a0444;font-size:11px;font-weight:700;color:#fbbf24">⏳ Still Fileable${leftLabel}</div>`;
@@ -305,17 +303,14 @@
                 ? '<span class="source-badge source-badge--noaa">NOAA</span>'
                 : '<span class="source-badge source-badge--est">EST</span>');
 
-        // ── Claim window badge (Texas 2-yr statute of limitations) ──
-        // Always derive days from lastStormDate so the number matches what's shown on the card.
+        // ── Claim window badge — driven entirely by claim-window.js (state-specific SOL) ──
         let claimBadgeHtml = '';
-        if (p.claimWindowTier === 'hot' || p.claimWindowTier === 'fileable') {
-            const stormMs   = p.lastStormDate && p.lastStormDate !== 'No data'
-                                ? new Date(p.lastStormDate).getTime() : null;
-            const daysSince = stormMs ? Math.floor((Date.now() - stormMs) / 86400000) : null;
-            const daysLeft  = daysSince != null ? Math.max(0, 730 - daysSince) : null;
-            const leftLabel = daysLeft != null ? `~${daysLeft}d left to file` : '';
-
-            if (p.claimWindowTier === 'hot') {
+        const _cw = getClaimWindow(p.lastStormDate, p.address);
+        if (_cw && !_cw.expired) {
+            const leftLabel  = `~${_cw.daysLeft}d left to file`;
+            const stateNote  = `${_cw.state} — ${_cw.years}-yr window`;
+            const daysSince  = _cw.totalDays - _cw.daysLeft;
+            if (daysSince <= 365) {
                 claimBadgeHtml = `
                 <div class="col-span-2 rounded-lg px-3 py-2 claim-hot">
                     <div class="flex items-center gap-2">
@@ -323,17 +318,17 @@
                         <span class="font-bold text-orange-300 text-xs">Hot Lead — File Now!</span>
                         <span class="ml-auto text-orange-400/70 text-xs">${leftLabel}</span>
                     </div>
-                    <p class="text-orange-400/50 text-xs mt-1" style="font-size:10px">Filing windows vary by policy — consult your adjuster.</p>
+                    <p class="text-orange-400/50 text-xs mt-1" style="font-size:10px">${stateNote} — consult your adjuster.</p>
                 </div>`;
             } else {
                 claimBadgeHtml = `
                 <div class="col-span-2 rounded-lg px-3 py-2 claim-fileable">
                     <div class="flex items-center gap-2">
                         <i class="fa-solid fa-clock text-yellow-400"></i>
-                        <span class="font-bold text-yellow-200 text-xs">Still Fileable (TX 2-yr window)</span>
+                        <span class="font-bold text-yellow-200 text-xs">Still Fileable</span>
                         <span class="ml-auto text-yellow-400/70 text-xs">${leftLabel}</span>
                     </div>
-                    <p class="text-yellow-400/50 text-xs mt-1" style="font-size:10px">Filing windows vary by policy — consult your adjuster.</p>
+                    <p class="text-yellow-400/50 text-xs mt-1" style="font-size:10px">${stateNote} — consult your adjuster.</p>
                 </div>`;
             }
         }
@@ -624,3 +619,4 @@ function toggleMobileMenu() {
     const nowHidden = menu.classList.toggle('hidden');
     icon.className = nowHidden ? 'fa-solid fa-bars text-lg' : 'fa-solid fa-xmark text-lg';
 }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   

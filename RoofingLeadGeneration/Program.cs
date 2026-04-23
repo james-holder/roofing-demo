@@ -136,17 +136,86 @@ using (var scope = app.Services.CreateScope())
     }
 
     // ── Schema patches ────────────────────────────────────────────────────
-    AddColumnIfMissing("users", "is_admin",      "INTEGER NOT NULL DEFAULT 0");
-    AddColumnIfMissing("leads", "year_built",    "INTEGER");
-    AddColumnIfMissing("leads", "owner_name",    "TEXT");
-    AddColumnIfMissing("leads", "owner_phone",   "TEXT");
-    AddColumnIfMissing("leads", "owner_email",   "TEXT");
-    AddColumnIfMissing("leads", "property_type", "TEXT");
-    AddColumnIfMissing("leads", "source_address","TEXT");
-    AddColumnIfMissing("leads", "notes",         "TEXT");
-    AddColumnIfMissing("leads", "is_enriched",   "INTEGER NOT NULL DEFAULT 0");
-    AddColumnIfMissing("leads", "deleted_at",    "TEXT");
-    AddColumnIfMissing("leads", "status",        "TEXT NOT NULL DEFAULT 'new'");
+    AddColumnIfMissing("users", "is_admin",            "INTEGER NOT NULL DEFAULT 0");
+    AddColumnIfMissing("users", "org_id",              "INTEGER REFERENCES orgs(id) ON DELETE SET NULL");
+    AddColumnIfMissing("users", "org_role",            "TEXT NOT NULL DEFAULT 'owner'");
+    AddColumnIfMissing("leads", "year_built",          "INTEGER");
+    AddColumnIfMissing("leads", "owner_name",          "TEXT");
+    AddColumnIfMissing("leads", "owner_phone",         "TEXT");
+    AddColumnIfMissing("leads", "owner_email",         "TEXT");
+    AddColumnIfMissing("leads", "property_type",       "TEXT");
+    AddColumnIfMissing("leads", "source_address",      "TEXT");
+    AddColumnIfMissing("leads", "notes",               "TEXT");
+    AddColumnIfMissing("leads", "is_enriched",         "INTEGER NOT NULL DEFAULT 0");
+    AddColumnIfMissing("leads", "deleted_at",          "TEXT");
+    AddColumnIfMissing("leads", "status",              "TEXT NOT NULL DEFAULT 'new'");
+    AddColumnIfMissing("leads", "org_id",              "INTEGER REFERENCES orgs(id) ON DELETE SET NULL");
+    AddColumnIfMissing("leads", "assigned_to_user_id", "INTEGER REFERENCES users(id) ON DELETE SET NULL");
+
+    // ── Migrate leads.address unique index → (org_id, address) ──────────
+    // The old global unique index prevents two orgs from saving the same address.
+    // We drop it and replace with a composite (org_id, address) unique index.
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='IX_leads_Address'";
+        var hasOldIndex = Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+        if (hasOldIndex)
+        {
+            cmd.CommandText = "DROP INDEX IF EXISTS IX_leads_Address";
+            cmd.ExecuteNonQuery();
+            cmd.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS IX_leads_org_address ON leads(org_id, address)";
+            cmd.ExecuteNonQuery();
+        }
+        // Also ensure the new composite index exists even if old one was already gone
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='IX_leads_org_address'";
+        var hasNewIndex = Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+        if (!hasNewIndex)
+        {
+            cmd.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS IX_leads_org_address ON leads(org_id, address)";
+            cmd.ExecuteNonQuery();
+        }
+    }
+    AddColumnIfMissing("watched_areas", "org_id",      "INTEGER REFERENCES orgs(id) ON DELETE SET NULL");
+    AddColumnIfMissing("sent_alerts",   "org_id",      "INTEGER REFERENCES orgs(id) ON DELETE SET NULL");
+
+    if (!TableExists("orgs"))
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE orgs (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT NOT NULL,
+                owner_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                plan       TEXT NOT NULL DEFAULT 'free',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """;
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE INDEX ix_orgs_owner_id ON orgs(owner_id)";
+        cmd.ExecuteNonQuery();
+    }
+
+    if (!TableExists("org_invites"))
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE org_invites (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                org_id      INTEGER NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+                email       TEXT NOT NULL,
+                token       TEXT NOT NULL UNIQUE,
+                role        TEXT NOT NULL DEFAULT 'rep',
+                expires_at  TEXT NOT NULL,
+                accepted_at TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """;
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE UNIQUE INDEX ix_org_invites_token  ON org_invites(token)";
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE INDEX        ix_org_invites_org_id ON org_invites(org_id)";
+        cmd.ExecuteNonQuery();
+    }
 
     if (!TableExists("enrichments"))
     {
@@ -160,83 +229,4 @@ using (var scope = app.Services.CreateScope())
                 status        TEXT NOT NULL DEFAULT 'pending',
                 provider      TEXT NOT NULL DEFAULT 'batchskiptracing',
                 credits_used  INTEGER NOT NULL DEFAULT 1,
-                created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """;
-        cmd.ExecuteNonQuery();
-
-        cmd.CommandText = "CREATE INDEX ix_enrichments_user_id    ON enrichments(user_id)";
-        cmd.ExecuteNonQuery();
-        cmd.CommandText = "CREATE INDEX ix_enrichments_created_at ON enrichments(created_at)";
-        cmd.ExecuteNonQuery();
-    }
-
-    if (!TableExists("lead_contacts"))
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE lead_contacts (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                lead_id      INTEGER NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-                name         TEXT,
-                phone        TEXT,
-                email        TEXT,
-                contact_type TEXT NOT NULL DEFAULT 'owner',
-                is_primary   INTEGER NOT NULL DEFAULT 0,
-                source       TEXT NOT NULL DEFAULT 'whitepages',
-                created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """;
-        cmd.ExecuteNonQuery();
-        cmd.CommandText = "CREATE INDEX ix_lead_contacts_lead_id ON lead_contacts(lead_id)";
-        cmd.ExecuteNonQuery();
-    }
-
-    if (!TableExists("watched_areas"))
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE watched_areas (
-                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id               INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                label                 TEXT NOT NULL,
-                center_lat            REAL NOT NULL,
-                center_lng            REAL NOT NULL,
-                radius_miles          REAL NOT NULL DEFAULT 10.0,
-                min_hail_size_inches  REAL NOT NULL DEFAULT 1.0,
-                alerts_enabled        INTEGER NOT NULL DEFAULT 1,
-                created_at            TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """;
-        cmd.ExecuteNonQuery();
-        cmd.CommandText = "CREATE INDEX ix_watched_areas_user_id ON watched_areas(user_id)";
-        cmd.ExecuteNonQuery();
-    }
-
-    if (!TableExists("sent_alerts"))
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            CREATE TABLE sent_alerts (
-                id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id           INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                watched_area_id   INTEGER NOT NULL REFERENCES watched_areas(id) ON DELETE CASCADE,
-                event_date        TEXT NOT NULL,
-                hail_size_inches  REAL NOT NULL,
-                sent_at           TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """;
-        cmd.ExecuteNonQuery();
-        cmd.CommandText = "CREATE UNIQUE INDEX ix_sent_alerts_area_date ON sent_alerts(watched_area_id, event_date)";
-        cmd.ExecuteNonQuery();
-        cmd.CommandText = "CREATE INDEX ix_sent_alerts_user_id ON sent_alerts(user_id)";
-        cmd.ExecuteNonQuery();
-    }
-
-    // ── Seed demo user + leads ────────────────────────────────────────
-    var demoEmail = config["Auth:DemoEmail"] ?? "james@repwing.com";
-    long demoUserId = 0;
-    {
-        using var cmd = conn.CreateCommand();
-        // Find or create demo user
-        cmd.CommandText = "SELECT id FROM users WHERE provider=
+               

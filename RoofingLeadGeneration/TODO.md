@@ -23,8 +23,8 @@
 
 ## 🟢 Priority 3 — Business Model
 
-- [ ] **Stripe billing** — tiered plans: Free (25 leads/month, no enrichment), Pro ($49/mo, unlimited + enrichment credits), Agency ($149/mo, team seats). Enrichment credit system already exists in the DB.
-- [ ] **Team accounts** — let a roofing company add multiple reps, assign leads to specific team members, track who's working what territory.
+- [ ] **Stripe billing** — tiered plans: Free (10 searches/mo, no enrichment, no alerts), Pro ($99/mo, unlimited searches, 100 enrichment credits/mo included, +$15 per 100 extra credits), Agency ($249/mo, 5 seats, 500 credits/mo, +$25/mo per extra seat). Enrichment credit system already exists in the DB. Rationale: enrichment costs ~$0.22/record — unlimited enrichment at $49 loses money on active users; $99 with credit cap is sustainable and in line with BatchLeads/HailTrace/PropStream pricing.
+- [ ] **Team accounts** — Agency tier only. Org model: one Owner (pays, manages billing + seats), Reps (search, save, work their pipeline), optional Manager (sees all reps, reassigns leads, no billing access). Shared lead pool by default — any rep can grab unassigned leads. Manual assignment available. Invite flow: Owner enters email → invite email sent → recipient creates account → lands inside org. DB: Orgs table, orgId on Users/Leads/WatchedAreas/SentAlerts, OrgInvites table (token, email, orgId, expiresAt), assignedToUserId on Leads.
 - [ ] **CSV import** — let users upload their own address lists and run NOAA hail scoring against them. Opens the door to roofers with existing canvassing lists.
 - [x] **Landing page** — hero, how-it-works, features, pricing tiers (Free/Pro/Agency), CTA. ✅
 - [ ] **Certified hail report (NWD/HailTrace)** — "Get Certified Report" button on enriched leads. NWD/HailTrace provide property-level certified hail certificates (~$5–15 each) that homeowners hand to their adjuster. Free data finds the lead; paid report closes the deal. Sell as a per-report add-on or include in Pro/Agency plan.
@@ -39,10 +39,4 @@
 
 - [x] **Claim window countdown by state** ✅ — each state has a different statute of limitations (TX: 2yr, FL: 3yr, CO: 2yr, etc.). Auto-detect state from lead address and show the exact deadline date ("47 days left to file") rather than just hot/fileable/expired. Turns the app into a closing tool, not just a data tool.
 
-- [ ] **AI roof condition pre-screening** — use satellite imagery (already on the map) to let roofers visually flag roof condition before calling, and eventually auto-score visible storm damage with a lightweight ML model. Undercuts EagleView ($40+/report) dramatically.
-
-- [ ] **HOA / property management targeting** — flag leads that are HOA-managed properties and surface the property manager contact instead of (or in addition to) the homeowner. One sale = potentially dozens of roofs.
-
-- [ ] **Neighborhood saturation tracking** — show which streets your team has already contacted so reps don't reach out to the same households twice. Shared across team accounts.
-
-- [ ] **Canvassing route optimizer** — GPS-optimized driving/walking order through saved leads. Lower priority — StormLead 
+- [ ] **AI roof condition pre-screening** — use satellite imagery (already on the map) to let ro

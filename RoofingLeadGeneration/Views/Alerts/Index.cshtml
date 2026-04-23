@@ -37,6 +37,7 @@
             <a href="/Leads/Saved" class="hover:text-white transition-colors">Saved Leads</a>
             <a href="/Alerts" class="text-white font-semibold transition-colors">Alerts</a>
             <a href="/Dashboard" class="hover:text-white transition-colors">Dashboard</a>
+            <a href="/Team" class="hover:text-white transition-colors">Team</a>
             <span class="text-slate-600">|</span>
             @if (User.Identity?.IsAuthenticated == true) {
                 <span class="text-slate-300 text-xs"><i class="fa-solid fa-circle-user mr-1 text-brand"></i>@User.Identity.Name</span>
@@ -56,6 +57,7 @@
         <a href="/Leads/Saved" class="flex items-center gap-3 px-3 py-3 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/60 transition-colors text-sm"><i class="fa-solid fa-bookmark w-4 text-center text-xs"></i>Saved Leads</a>
         <a href="/Alerts" class="flex items-center gap-3 px-3 py-3 rounded-xl bg-slate-700/60 text-white font-semibold text-sm"><i class="fa-solid fa-bell w-4 text-center text-xs text-brand"></i>Alerts</a>
         <a href="/Dashboard" class="flex items-center gap-3 px-3 py-3 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/60 transition-colors text-sm"><i class="fa-solid fa-chart-bar w-4 text-center text-xs"></i>Dashboard</a>
+        <a href="/Team" class="flex items-center gap-3 px-3 py-3 rounded-xl text-slate-300 hover:text-white hover:bg-slate-700/60 transition-colors text-sm"><i class="fa-solid fa-users w-4 text-center text-xs"></i>Team</a>
     </div>
 </header>
 
@@ -341,13 +343,4 @@ function hailLabel(inches) {
 
 function fmtDate(iso) {
     if (!iso) return '—';
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function showError(el, msg) {
-    el.textContent = msg;
+    const d =

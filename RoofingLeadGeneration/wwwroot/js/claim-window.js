@@ -1,3 +1,9 @@
+ // Internal escapeAttr — keeps this file self-contained (no dependency on site.js or saved-leads.js)
+function _cwEscape(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 /**
  * claim-window.js
  * ──────────────────────────────────────────────────────────────────
@@ -158,7 +164,7 @@ function buildClaimBadge(stormDateStr, address) {
     var tooltip = cw.note + ' — Deadline: ' + cw.deadlineDate.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
 
     if (cw.expired) {
-        return '<span class="claim-badge claim-expired" title="' + escapeAttr(tooltip) + '">' +
+        return '<span class="claim-badge claim-expired" title="' + _cwEscape(tooltip) + '">' +
                '<i class="fa-solid fa-clock-rotate-left mr-0.5"></i>Expired</span>';
     }
 
@@ -167,10 +173,4 @@ function buildClaimBadge(stormDateStr, address) {
     else if (cw.warning) { cls = 'claim-warning'; icon = 'fa-triangle-exclamation'; }
     else                 { cls = 'claim-healthy'; icon = 'fa-clock'; }
 
-    var label = cw.daysLeft >= 365
-        ? Math.round(cw.daysLeft / 30.4) + ' mo left'
-        : cw.daysLeft + 'd left';
-
-    return '<span class="claim-badge ' + cls + '" title="' + escapeAttr(tooltip) + '">' +
-           '<i class="fa-solid ' + icon + ' mr-0.5"></i>' + label + '</span>';
-}
+    va
