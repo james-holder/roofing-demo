@@ -1,6 +1,7 @@
 @{
     Layout = null;
 }
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -65,7 +66,7 @@
             <a href="/Help" class="hover:text-white transition-colors">
                 <i class="fa-solid fa-circle-question mr-1 text-xs"></i>Help
             </a>
-            @if ((User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "") == "jaholder78@gmail.com") {
+            @if ((User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "") == Configuration["AdminEmail"]) {
                 <a href="/Admin" class="text-orange-400 hover:text-orange-300 transition-colors text-xs">
                     <i class="fa-solid fa-shield-halved mr-1"></i>Admin
                 </a>

@@ -11,8 +11,13 @@ namespace RoofingLeadGeneration.Controllers
     public class DashboardController : Controller
     {
         private readonly AppDbContext _db;
+        private readonly string       _adminEmail;
 
-        public DashboardController(AppDbContext db) => _db = db;
+        public DashboardController(AppDbContext db, IConfiguration config)
+        {
+            _db         = db;
+            _adminEmail = config["AdminEmail"] ?? "";
+        }
 
         private long? CurrentUserId =>
             long.TryParse(User.FindFirst("user_db_id")?.Value, out var id) ? id : null;
@@ -21,7 +26,7 @@ namespace RoofingLeadGeneration.Controllers
             long.TryParse(User.FindFirst("user_org_id")?.Value, out var id) ? id : null;
 
         private bool IsAdmin() =>
-            (User.FindFirst(ClaimTypes.Email)?.Value ?? "") == "jaholder78@gmail.com";
+            (User.FindFirst(ClaimTypes.Email)?.Value ?? "") == _adminEmail;
 
         // ── GET /Dashboard ───────────────────────────────────────────
         [HttpGet]

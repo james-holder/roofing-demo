@@ -1,6 +1,7 @@
 @{
     Layout = null;
 }
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -103,7 +104,7 @@
             <a href="/Help" class="hover:text-white transition-colors">
                 <i class="fa-solid fa-circle-question mr-1 text-xs"></i>Help
             </a>
-            @if ((User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "") == "jaholder78@gmail.com") {
+            @if ((User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? "") == Configuration["AdminEmail"]) {
                 <a href="/Admin" class="text-orange-400 hover:text-orange-300 transition-colors text-xs">
                     <i class="fa-solid fa-shield-halved mr-1"></i>Admin
                 </a>
@@ -177,28 +178,34 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
-     HERO / SEARCH
+     MAIN TAB BAR  (always visible, sticky below nav)
 ══════════════════════════════════════════════════════════════ -->
-<section id="search" class="hero-gradient py-16 sm:py-20 border-b border-slate-700/40">
-    <div class="max-w-3xl mx-auto px-4 sm:px-6 text-center">
+<div id="mainTabBar" class="bg-slate-900/80 border-b border-slate-700/60 sticky top-16 z-40 backdrop-blur-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex">
+        <button id="tabBtnNeighborhood" onclick="switchMainTab('neighborhood')"
+            class="flex items-center gap-2 px-5 py-3.5 text-sm font-semibold
+                   border-b-2 border-brand text-white -mb-px transition-colors">
+            <i class="fa-solid fa-house-chimney text-brand/80 text-xs"></i>
+            Neighborhood Scan
+        </button>
+        <button id="tabBtnStorm" onclick="switchMainTab('storm')"
+            class="flex items-center gap-2 px-5 py-3.5 text-sm font-semibold
+                   border-b-2 border-transparent text-slate-400 hover:text-slate-200 -mb-px transition-colors">
+            <i class="fa-solid fa-cloud-bolt text-xs"></i>
+            Storm Explorer
+            <span class="px-1.5 py-0.5 rounded-full bg-brand/20 text-brand text-xs font-bold leading-none">BETA</span>
+        </button>
+    </div>
+</div>
 
-        <!-- Badge -->
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand/10 border border-brand/30 text-brand text-xs font-semibold mb-6">
-            <i class="fa-solid fa-bolt"></i>
-            Powered by Hail Impact Intelligence
-        </div>
+<!-- ══════════════════════════════════════════════════════════════
+     NEIGHBORHOOD SCAN PANEL  (search form + results)
+══════════════════════════════════════════════════════════════ -->
+<div id="neighborhoodPanel">
 
-        <!-- Headline -->
-        <h1 class="text-4xl sm:text-5xl font-extrabold tracking-tight leading-tight mb-4">
-            Find Roofing Leads in<br />
-            <span class="text-brand">Any Neighborhood</span>
-        </h1>
-        <p class="text-slate-400 text-lg mb-10">
-            Enter any address to instantly scan nearby properties for hail damage risk and storm history.
-        </p>
-
-        <!-- Search card -->
-        <div class="bg-slate-800/80 backdrop-blur rounded-2xl shadow-2xl border border-slate-700/60 p-6 sm:p-8 text-left">
+    <!-- Search form -->
+    <div class="max-w-3xl mx-auto px-4 sm:px-6 py-10">
+        <div class="bg-slate-800/80 backdrop-blur rounded-2xl shadow-2xl border border-slate-700/60 p-6 sm:p-8">
             <div class="flex flex-col sm:flex-row gap-3">
 
                 <!-- Address input -->
@@ -256,15 +263,7 @@
                 <span id="errorText">Something went wrong. Please try again.</span>
             </div>
         </div>
-
-        <!-- Stats strip -->
-        <div class="mt-8 flex flex-wrap justify-center gap-6 text-sm text-slate-500">
-            <span><i class="fa-solid fa-check-circle text-brand mr-1"></i>Real-time geocoding</span>
-            <span><i class="fa-solid fa-check-circle text-brand mr-1"></i>20+ properties per scan</span>
-            <span><i class="fa-solid fa-check-circle text-brand mr-1"></i>CSV export ready</span>
-        </div>
     </div>
-</section>
 
 <!-- ══════════════════════════════════════════════════════════════
      RESULTS SECTION
@@ -353,7 +352,6 @@
             Save Selected (<span id="selectedCount">0</span>)
         </button>
     </div>
-
     <!-- Two-col: cards + map -->
     <div class="flex flex-col lg:flex-row gap-6">
 
@@ -371,6 +369,111 @@
 
 </section>
 
+</div><!-- end #neighborhoodPanel -->
+
+<!-- ══════════════════════════════════════════════════════════════
+     STORM EXPLORER SECTION  (hidden until Storm Explorer tab is clicked)
+══════════════════════════════════════════════════════════════ -->
+<section id="stormExplorer" class="hidden max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+    <!-- Filter bar -->
+    <div class="mb-5 flex flex-wrap items-center gap-3 bg-slate-800/60 rounded-2xl border border-slate-700/60 px-5 py-3.5">
+        <i class="fa-solid fa-sliders text-brand text-sm"></i>
+        <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider">Filters</span>
+
+        <!-- Min hail size -->
+        <div class="flex items-center gap-2">
+            <label class="text-xs text-slate-400" for="seMinHail">Min Hail:</label>
+            <div class="relative">
+                <select id="seMinHail" onchange="applySeFilters()"
+                    class="pl-3 pr-7 py-1.5 rounded-lg bg-slate-900 border border-slate-600 text-white text-xs
+                           appearance-none focus:outline-none focus:ring-1 focus:ring-brand cursor-pointer">
+                    <option value="0.5">&#8805; 0.50&quot; (pea)</option>
+                    <option value="0.75" selected>&#8805; 0.75&quot; (marble)</option>
+                    <option value="1.0">&#8805; 1.00&quot; (quarter)</option>
+                    <option value="1.5">&#8805; 1.50&quot; (half dollar)</option>
+                    <option value="2.0">&#8805; 2.00&quot; (golf ball)</option>
+                </select>
+                <div class="absolute inset-y-0 right-2 flex items-center pointer-events-none">
+                    <i class="fa-solid fa-chevron-down text-slate-500 text-xs"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lookback window -->
+        <div class="flex items-center gap-2">
+            <label class="text-xs text-slate-400" for="seLookback">Period:</label>
+            <div class="relative">
+                <select id="seLookback" onchange="applySeFilters()"
+                    class="pl-3 pr-7 py-1.5 rounded-lg bg-slate-900 border border-slate-600 text-white text-xs
+                           appearance-none focus:outline-none focus:ring-1 focus:ring-brand cursor-pointer">
+                    <option value="30">Last 30 days</option>
+                    <option value="60">Last 60 days</option>
+                    <option value="90" selected>Last 90 days</option>
+                    <option value="180">Last 6 months</option>
+                    <option value="365">Last 12 months</option>
+                </select>
+                <div class="absolute inset-y-0 right-2 flex items-center pointer-events-none">
+                    <i class="fa-solid fa-chevron-down text-slate-500 text-xs"></i>
+                </div>
+            </div>
+        </div>
+
+        <!-- Wind toggle -->
+        <label class="flex items-center gap-2 cursor-pointer select-none">
+            <span class="relative w-8 h-4 flex-shrink-0">
+                <input type="checkbox" id="seIncludeWind" class="sr-only peer" checked onchange="applySeFilters()">
+                <span class="block w-8 h-4 rounded-full bg-slate-700 peer-checked:bg-brand/70 transition-colors"></span>
+                <span class="absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform peer-checked:translate-x-4 shadow"></span>
+            </span>
+            <i class="fa-solid fa-wind text-blue-400 text-xs"></i>
+            <span class="text-xs text-slate-300">Wind Events</span>
+        </label>
+
+        <!-- Hail Reports overlay toggle -->
+        <button id="mrmsToggleBtn" onclick="toggleHailReports()"
+            class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-600 bg-slate-900
+                   text-xs text-slate-400 hover:text-white hover:border-sky-500/60 transition-colors">
+            <i class="fa-solid fa-circle-dot text-sky-500/70 text-xs"></i>
+            Hail Reports
+        </button>
+
+        <div class="flex-1"></div>
+
+        <span id="seLoadingBadge" class="hidden text-xs text-slate-400 flex items-center gap-1.5">
+            <i class="fa-solid fa-circle-notch fa-spin text-brand"></i>Loading&hellip;
+        </span>
+        <span class="text-xs font-semibold text-slate-300">
+            <span id="seCount" class="text-brand font-bold">&mdash;</span> storms found
+        </span>
+    </div>
+
+    <!-- Two-column: event list + map -->
+    <div class="flex flex-col lg:flex-row gap-6" style="height: calc(100vh - 280px); min-height: 520px;">
+
+        <!-- Event list -->
+        <div id="seListWrapper" class="lg:w-96 xl:w-[420px] flex-shrink-0 overflow-y-auto pr-1">
+            <div id="seList">
+                <div class="flex flex-col items-center justify-center h-64 text-center text-slate-500 text-sm gap-3">
+                    <i class="fa-solid fa-cloud-bolt text-4xl text-slate-700"></i>
+                    <div>
+                        <div class="font-semibold text-slate-400 mb-1">No storms loaded yet</div>
+                        Pan the map to explore storms in any area.<br>
+                        Or search a neighborhood above, then come back here.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Leaflet map -->
+        <div class="flex-1 rounded-2xl overflow-hidden border border-slate-700/60 shadow-xl min-h-[320px]">
+            <div id="seMapContainer" class="w-full h-full"></div>
+        </div>
+
+    </div>
+
+</section>
+
 <footer class="mt-12 border-t border-slate-700/60 bg-slate-900/60">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-500">
         <div class="flex items-center gap-2">
@@ -379,14 +482,11 @@
             </div>
             <span>StormLead Pro &copy; 2026</span>
         </div>
-        <div class="flex items-center gap-4">
-            <a href="/Leads/Saved" class="text-brand hover:text-orange-300 transition-colors">Saved Leads</a>
-            <a href="/Dashboard" class="hover:text-slate-300 transition-colors">Dashboard</a>
-        </div>
     </div>
 </footer>
 
 <script src="~/js/claim-window.js"></script>
 <script src="~/js/site.js"></script>
+<script src="~/js/storm-explorer.js"></script>
 </body>
 </html>

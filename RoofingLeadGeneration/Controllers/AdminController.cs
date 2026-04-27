@@ -9,11 +9,16 @@ namespace RoofingLeadGeneration.Controllers
     public class AdminController : Controller
     {
         private readonly AppDbContext _db;
+        private readonly string       _adminEmail;
 
-        public AdminController(AppDbContext db) => _db = db;
+        public AdminController(AppDbContext db, IConfiguration config)
+        {
+            _db         = db;
+            _adminEmail = config["AdminEmail"] ?? "";
+        }
 
         private bool IsAdmin() =>
-            (User.FindFirst(ClaimTypes.Email)?.Value ?? "") == "jaholder78@gmail.com";
+            (User.FindFirst(ClaimTypes.Email)?.Value ?? "") == _adminEmail;
 
         // ── GET /Admin ───────────────────────────────────────────────
         [HttpGet]

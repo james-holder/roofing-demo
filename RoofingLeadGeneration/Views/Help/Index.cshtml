@@ -45,10 +45,10 @@
         </a>
 
         <nav class="hidden md:flex items-center gap-6 text-sm text-slate-400">
-            <a href="#getting-started" class="hover:text-white transition-colors">Getting Started</a>
-            <a href="#features"        class="hover:text-white transition-colors">Features</a>
-            <a href="#data-sources"    class="hover:text-white transition-colors">Data Sources</a>
-            <a href="#faq"             class="hover:text-white transition-colors">FAQ</a>
+            <a href="#getting-started"  class="hover:text-white transition-colors">Getting Started</a>
+            <a href="#features"         class="hover:text-white transition-colors">Features</a>
+            <a href="#data-sources"     class="hover:text-white transition-colors">Data Sources</a>
+            <a href="#faq"              class="hover:text-white transition-colors">FAQ</a>
             <span class="text-slate-700">|</span>
             @if (isAuthed)
             {
@@ -73,7 +73,7 @@
             <i class="fa-solid fa-book-open text-xs"></i> Help &amp; Documentation
         </div>
         <h1 class="text-4xl sm:text-5xl font-black mb-4">Everything you need to know.</h1>
-        <p class="text-slate-400 text-lg">Learn how to find storm-damaged roofing leads, understand risk scores, set up alerts, and get the most out of StormLead Pro.</p>
+        <p class="text-slate-400 text-lg">Learn how to find storm-damaged roofing leads, understand risk scores, explore hail events on the map, set up alerts, and get the most out of StormLead Pro.</p>
     </div>
 </section>
 
@@ -84,14 +84,15 @@
     <aside class="hidden lg:block w-56 shrink-0">
         <nav class="sticky top-24 space-y-1 text-sm">
             <p class="text-slate-500 font-semibold uppercase tracking-widest text-xs mb-3">On this page</p>
-            <a href="#getting-started" class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Getting Started</a>
-            <a href="#searching"       class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Searching for Leads</a>
-            <a href="#risk-scores"     class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Risk Scores & Hail</a>
-            <a href="#saved-leads"     class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Saved Leads</a>
-            <a href="#enrichment"      class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Owner Enrichment</a>
-            <a href="#alerts"          class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Storm Alerts</a>
-            <a href="#data-sources"    class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Data Sources</a>
-            <a href="#faq"             class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">FAQ</a>
+            <a href="#getting-started"  class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Getting Started</a>
+            <a href="#searching"        class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Neighborhood Scan</a>
+            <a href="#storm-explorer"   class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Storm Explorer</a>
+            <a href="#risk-scores"      class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Risk Scores &amp; Hail</a>
+            <a href="#saved-leads"      class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Saved Leads</a>
+            <a href="#enrichment"       class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Owner Enrichment</a>
+            <a href="#alerts"           class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Storm Alerts</a>
+            <a href="#data-sources"     class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">Data Sources</a>
+            <a href="#faq"              class="block px-3 py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors">FAQ</a>
         </nav>
     </aside>
 
@@ -130,25 +131,102 @@
             </div>
         </section>
 
-        <!-- ── Searching ───────────────────────────────────────────────── -->
+        <!-- ── Neighborhood Scan ───────────────────────────────────────── -->
         <section id="searching" class="doc-section">
             <div class="flex items-center gap-3 mb-6">
                 <div class="w-9 h-9 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center shrink-0">
                     <i class="fa-solid fa-magnifying-glass text-sky-400 text-sm"></i>
                 </div>
-                <h2 class="text-2xl font-black">Searching for Leads</h2>
+                <h2 class="text-2xl font-black">Neighborhood Scan</h2>
             </div>
             <div class="space-y-4 text-slate-300 leading-relaxed">
-                <p>From the <strong class="text-white">Search</strong> page, enter any address — a street address, intersection, city, or ZIP code — and choose a search radius (0.5 to 50 miles). Hit <span class="inline-flex items-center gap-1 bg-brand/10 border border-brand/20 text-brand text-xs px-2 py-0.5 rounded font-semibold">Analyze Neighborhood</span> and results appear within seconds.</p>
+                <p>From the <strong class="text-white">Neighborhood Scan</strong> tab, enter any address — a street address, intersection, city, or ZIP code — and choose a search radius (0.25 to 3 miles). Hit <span class="inline-flex items-center gap-1 bg-brand/10 border border-brand/20 text-brand text-xs px-2 py-0.5 rounded font-semibold">Scan Neighborhood</span> and results appear within seconds.</p>
 
                 <h3 class="text-white font-bold text-lg mt-6">Reading the results</h3>
                 <p>Each property card shows the address, a color-coded risk badge, the largest recorded hail size, the most recent storm date, and the number of storm events on record. Properties are sorted highest-risk first by default.</p>
 
                 <h3 class="text-white font-bold text-lg mt-6">Map view</h3>
-                <p>Click the <span class="text-slate-200 font-semibold">Map</span> tab to see every result pinned on a Google Map. Pins are color-coded by risk level — red for High, yellow for Medium, green for Low — so you can immediately see where storm damage is concentrated.</p>
+                <p>The interactive map shows every result as a circle, color-coded by risk level — red for High, orange for Medium, yellow for Low — so you can immediately see where storm damage is concentrated. Click any circle to highlight the matching property card. Switch to Satellite view using the layer control in the top-right corner of the map.</p>
 
                 <h3 class="text-white font-bold text-lg mt-6">Saving leads</h3>
-                <p>Click the bookmark icon on any property card to save it to your lead list. You can save individual leads or use the <span class="text-slate-200 font-semibold">Save All High Risk</span> button to capture every High-risk property in one click.</p>
+                <p>Click the bookmark icon on any property card to save it to your lead list. You can save individual leads or use <strong class="text-white">Select All</strong> and then <strong class="text-white">Save Selected</strong> to bulk-save multiple properties at once.</p>
+            </div>
+        </section>
+
+        <!-- ── Storm Explorer ──────────────────────────────────────────── -->
+        <section id="storm-explorer" class="doc-section">
+            <div class="flex items-center gap-3 mb-6">
+                <div class="w-9 h-9 rounded-xl bg-brand/10 border border-brand/20 flex items-center justify-center shrink-0">
+                    <i class="fa-solid fa-cloud-bolt text-brand text-sm"></i>
+                </div>
+                <h2 class="text-2xl font-black">
+                    Storm Explorer
+                    <span class="ml-2 text-xs font-bold bg-brand/20 text-brand border border-brand/30 px-2 py-0.5 rounded-full align-middle">BETA</span>
+                </h2>
+            </div>
+            <div class="space-y-4 text-slate-300 leading-relaxed">
+                <p>Storm Explorer flips the workflow. Instead of searching a specific address, you pan and zoom a full-screen map to explore storm history across any region. As you move the map, the left panel automatically updates with ranked storm clusters in the visible area.</p>
+                <p>Click the <strong class="text-white">Storm Explorer</strong> tab at the top of the app to switch into this mode.</p>
+
+                <h3 class="text-white font-bold text-lg mt-6">Filter bar</h3>
+                <p>Four controls let you narrow what you see:</p>
+                <div class="grid sm:grid-cols-2 gap-3 mt-3">
+                    <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4">
+                        <p class="font-semibold text-white text-sm mb-1"><i class="fa-solid fa-snowflake text-sky-400 mr-1.5"></i>Min Hail</p>
+                        <p class="text-slate-400 text-sm">Show only clusters that had hail at or above this size. Range: 0.50" (pea) through 2.00" (golf ball).</p>
+                    </div>
+                    <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4">
+                        <p class="font-semibold text-white text-sm mb-1"><i class="fa-solid fa-calendar text-violet-400 mr-1.5"></i>Period</p>
+                        <p class="text-slate-400 text-sm">Lookback window for storm events: 30, 60, 90 days (default), 6 months, or 12 months.</p>
+                    </div>
+                    <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4">
+                        <p class="font-semibold text-white text-sm mb-1"><i class="fa-solid fa-wind text-blue-400 mr-1.5"></i>Wind Events</p>
+                        <p class="text-slate-400 text-sm">Toggle to include or exclude high-wind reports alongside hail events.</p>
+                    </div>
+                    <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4">
+                        <p class="font-semibold text-white text-sm mb-1"><i class="fa-solid fa-circle-dot text-sky-400 mr-1.5"></i>Hail Reports</p>
+                        <p class="text-slate-400 text-sm">Overlay individual NWS spotter and SPC hail event dots on the map. See below for details.</p>
+                    </div>
+                </div>
+
+                <h3 class="text-white font-bold text-lg mt-6">Event list</h3>
+                <p>The left panel shows ranked storm clusters — groups of hail/wind reports near the same location. Each card shows the tier (HOT / ACTIVE / MINOR), the largest hail size, peak wind speed, date, and a score from 0–100. Click any card to fly the map to that cluster.</p>
+                <div class="grid sm:grid-cols-3 gap-3 mt-3">
+                    <div class="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+                        <span class="text-xs font-bold bg-red-500/20 text-red-300 px-2 py-0.5 rounded-full">HOT</span>
+                        <p class="text-slate-400 text-sm mt-2">Score ≥ 70. Significant hail — roof damage likely. Act fast.</p>
+                    </div>
+                    <div class="bg-orange-500/10 border border-orange-500/30 rounded-xl p-4">
+                        <span class="text-xs font-bold bg-orange-500/20 text-orange-300 px-2 py-0.5 rounded-full">ACTIVE</span>
+                        <p class="text-slate-400 text-sm mt-2">Score 40–69. Moderate event. Worth canvassing nearby.</p>
+                    </div>
+                    <div class="bg-slate-700/30 border border-slate-600/40 rounded-xl p-4">
+                        <span class="text-xs font-bold bg-slate-600/30 text-slate-400 px-2 py-0.5 rounded-full">MINOR</span>
+                        <p class="text-slate-400 text-sm mt-2">Score &lt; 40. Small or older event. Low priority.</p>
+                    </div>
+                </div>
+
+                <h3 class="text-white font-bold text-lg mt-6">Hail Reports overlay</h3>
+                <p>Toggling <strong class="text-white">Hail Reports</strong> on loads individual hail event dots sourced from NWS storm spotters and the NOAA Storm Prediction Center (SPC). These are raw, un-aggregated reports — one dot per storm-spotter observation — giving you a finer-grained picture than the cluster circles alone.</p>
+                <p>A floating legend appears in the lower-left corner of the map when the overlay is active:</p>
+                <div class="flex flex-col gap-2 mt-3 max-w-xs">
+                    <div class="flex items-center gap-3 bg-slate-800/60 border border-slate-700/60 rounded-lg px-4 py-2.5">
+                        <span class="w-4 h-4 rounded-full bg-red-500/60 border border-red-500 shrink-0"></span>
+                        <span class="text-sm"><span class="text-red-400 font-semibold">≥ 2.0"</span> <span class="text-slate-500 text-xs ml-1">golf ball</span></span>
+                    </div>
+                    <div class="flex items-center gap-3 bg-slate-800/60 border border-slate-700/60 rounded-lg px-4 py-2.5">
+                        <span class="w-3.5 h-3.5 rounded-full bg-orange-500/60 border border-orange-500 shrink-0"></span>
+                        <span class="text-sm"><span class="text-orange-400 font-semibold">≥ 1.0"</span> <span class="text-slate-500 text-xs ml-1">quarter</span></span>
+                    </div>
+                    <div class="flex items-center gap-3 bg-slate-800/60 border border-slate-700/60 rounded-lg px-4 py-2.5">
+                        <span class="w-2.5 h-2.5 rounded-full bg-yellow-500/60 border border-yellow-500 shrink-0"></span>
+                        <span class="text-sm"><span class="text-yellow-400 font-semibold">&lt; 1.0"</span> <span class="text-slate-500 text-xs ml-1">pea / dime</span></span>
+                    </div>
+                </div>
+                <p class="mt-3">Dot size scales with hail diameter so larger events are immediately visible. Hover any dot for the exact size, date, and report source.</p>
+
+                <h3 class="text-white font-bold text-lg mt-6">Map layers</h3>
+                <p>Use the layer control (top-right of map) to switch between <strong class="text-white">Dark Street</strong> (default) and <strong class="text-white">Satellite</strong> base maps. The Esri World Imagery satellite layer makes it easy to visually assess roof condition and neighborhood density before running a full Neighborhood Scan.</p>
             </div>
         </section>
 
@@ -319,8 +397,26 @@
                     <div class="flex items-start gap-3">
                         <i class="fa-solid fa-cloud-showers-heavy text-sky-400 mt-0.5 w-4 shrink-0"></i>
                         <div>
-                            <p class="font-semibold text-white">NOAA SWDI <span class="text-xs text-slate-500 font-normal ml-1">— Hail history</span></p>
-                            <p class="text-slate-400 text-sm mt-1">The National Weather Service Severe Weather Data Inventory contains verified NEXRAD radar hail signatures going back 10+ years. No API key required — completely free and publicly available.</p>
+                            <p class="font-semibold text-white">NOAA SWDI <span class="text-xs text-slate-500 font-normal ml-1">— Hail history (Neighborhood Scan)</span></p>
+                            <p class="text-slate-400 text-sm mt-1">The National Weather Service Severe Weather Data Inventory contains verified NEXRAD radar hail signatures going back 10+ years. No API key required — completely free and publicly available. Note: SWDI data carries a ~90–120 day processing lag for the most recent events.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5">
+                    <div class="flex items-start gap-3">
+                        <i class="fa-solid fa-circle-dot text-sky-400 mt-0.5 w-4 shrink-0"></i>
+                        <div>
+                            <p class="font-semibold text-white">Iowa State Mesonet LSR <span class="text-xs text-slate-500 font-normal ml-1">— Hail Reports overlay</span></p>
+                            <p class="text-slate-400 text-sm mt-1">The Iowa State IEM Local Storm Reports API provides NWS storm-spotter hail observations for the US with up to 5 years of history. Used to power the individual Hail Reports dots in Storm Explorer. Free, no API key required.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5">
+                    <div class="flex items-start gap-3">
+                        <i class="fa-solid fa-bolt text-yellow-400 mt-0.5 w-4 shrink-0"></i>
+                        <div>
+                            <p class="font-semibold text-white">NOAA SPC Hail Reports <span class="text-xs text-slate-500 font-normal ml-1">— Hail Reports overlay (recent)</span></p>
+                            <p class="text-slate-400 text-sm mt-1">The Storm Prediction Center publishes verified hail reports from the past several days as a public CSV feed. StormLead Pro merges SPC reports with LSR data, deduplicates overlapping events, and renders them as the Hail Reports overlay in Storm Explorer. Free, no API key required.</p>
                         </div>
                     </div>
                 </div>
@@ -328,8 +424,8 @@
                     <div class="flex items-start gap-3">
                         <i class="fa-solid fa-satellite text-violet-400 mt-0.5 w-4 shrink-0"></i>
                         <div>
-                            <p class="font-semibold text-white">Tomorrow.io <span class="text-xs text-slate-500 font-normal ml-1">— Recent &amp; live hail data</span></p>
-                            <p class="text-slate-400 text-sm mt-1">NOAA data has a ~120-day processing delay for recent events. Tomorrow.io fills that gap with near-real-time storm data and powers the Storm Alerts feature. Free tier covers 500 requests/day.</p>
+                            <p class="font-semibold text-white">Tomorrow.io <span class="text-xs text-slate-500 font-normal ml-1">— Storm Alerts &amp; recent hail</span></p>
+                            <p class="text-slate-400 text-sm mt-1">Powers the Storm Alerts background monitor with near-real-time storm data and fills the NOAA processing gap for very recent events in Neighborhood Scan. Free tier covers 500 requests/day.</p>
                         </div>
                     </div>
                 </div>
@@ -365,7 +461,16 @@
                         <i class="fa-solid fa-map text-brand mt-0.5 w-4 shrink-0"></i>
                         <div>
                             <p class="font-semibold text-white">Google Maps <span class="text-xs text-slate-500 font-normal ml-1">— Geocoding &amp; map display</span></p>
-                            <p class="text-slate-400 text-sm mt-1">Used for address autocomplete, geocoding (address → lat/lng), and the interactive map view.</p>
+                            <p class="text-slate-400 text-sm mt-1">Used for address autocomplete, geocoding (address → lat/lng), and the interactive map view in Neighborhood Scan.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-5">
+                    <div class="flex items-start gap-3">
+                        <i class="fa-solid fa-globe text-teal-400 mt-0.5 w-4 shrink-0"></i>
+                        <div>
+                            <p class="font-semibold text-white">Esri World Imagery / Leaflet.js <span class="text-xs text-slate-500 font-normal ml-1">— Storm Explorer map</span></p>
+                            <p class="text-slate-400 text-sm mt-1">The Storm Explorer map is built on Leaflet.js with Esri World Imagery satellite tiles and CARTO dark street tiles. Free for non-commercial use.</p>
                         </div>
                     </div>
                 </div>
@@ -386,10 +491,16 @@
                 @{
                     var faqs = new[] {
                         ("Is the hail data real, or are the risk scores estimated?",
-                         "All hail data comes from NOAA's NEXRAD radar network and Tomorrow.io — no estimates, no ZIP-code averages. Every risk score is based on an actual recorded hail event at or near that property's coordinates."),
+                         "All hail data comes from NOAA's NEXRAD radar network, NWS storm spotters, and Tomorrow.io — no estimates, no ZIP-code averages. Every risk score is based on an actual recorded hail event at or near that property's coordinates."),
 
                         ("How fresh is the data?",
-                         "NOAA SWDI data is typically 90–120 days behind real time due to NWS processing delays. For recent storms, StormLead Pro automatically supplements NOAA with Tomorrow.io data, which is updated within hours of a storm. Storm Alerts use Tomorrow.io exclusively and fire within 30 minutes of detection."),
+                         "NOAA SWDI data (used for Neighborhood Scan) carries a ~90–120 day processing lag. For recent storms, StormLead Pro supplements NOAA with Tomorrow.io, which is updated within hours of a storm. The Storm Explorer Hail Reports overlay draws from Iowa State LSR (up to 5-year history) and the SPC feed (last few days), so it reflects events that haven't yet landed in SWDI. Storm Alerts use Tomorrow.io exclusively and fire within 30 minutes of detection."),
+
+                        ("What is Storm Explorer and how is it different from Neighborhood Scan?",
+                         "Neighborhood Scan is address-first: you enter a specific address and we find every property nearby that was hit by hail. Storm Explorer is map-first: you pan and zoom freely to explore storm history across any region and see ranked event clusters. Use Storm Explorer to scout unfamiliar territory or find active storm corridors, then drill into a neighborhood with Neighborhood Scan to pull the actual lead list."),
+
+                        ("What do the Hail Reports dots in Storm Explorer represent?",
+                         "Each dot is an individual storm-spotter observation from the NWS Local Storm Reports network or the NOAA SPC hail feed. These are ground-truth human reports — a trained spotter found and measured an actual hailstone. Dot color and size reflect hail diameter: red/large for golf ball and above, orange/medium for quarter-size, yellow/small for pea to dime. Hover any dot for the exact size, date, and report source."),
 
                         ("What if an address doesn't appear in the results?",
                          "Address coverage depends on OpenStreetMap data density in that area. Rural or recently developed neighborhoods may have fewer addresses on record. You can always enter a specific address directly in the search bar even if it doesn't appear in the results list."),

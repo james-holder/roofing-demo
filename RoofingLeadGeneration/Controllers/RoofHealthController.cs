@@ -220,9 +220,9 @@ namespace RoofingLeadGeneration.Controllers
                 formattedAddress = center.FormattedAddress;
                 stateAbbr        = center.StateAbbr;
             }
-            var (properties, hailEventCount) = await GetPropertiesAsync(formattedAddress, lat, lng, radius, stateAbbr);
+            var (properties, hailEventCount, hailEvents) = await GetPropertiesAsync(formattedAddress, lat, lng, radius, stateAbbr);
 
-            return Json(new { centerAddress = formattedAddress, lat, lng, hailEventCount, osmCount = properties.Count, properties },
+            return Json(new { centerAddress = formattedAddress, lat, lng, hailEventCount, hailEvents, osmCount = properties.Count, properties },
                 new JsonSerializerOptions
                 {
                     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -251,7 +251,7 @@ namespace RoofingLeadGeneration.Controllers
                 exportState  = center.StateAbbr;
             }
 
-            var (properties, _) = await GetPropertiesAsync(address, lat, lng, radius, exportState);
+            var (properties, _, _) = await GetPropertiesAsync(address, lat, lng, radius, exportState);
 
             var sb = new StringBuilder();
             sb.AppendLine("Address,Latitude,Longitude,Risk Level,Last Storm Date,Hail Size,Data Source,Claim Window,Days Since Storm");
@@ -303,7 +303,7 @@ namespace RoofingLeadGeneration.Controllers
             catch (Exception ex) { _logger.LogError(ex, "OSM fetch failed"); return new(); }
         }
 
-        private async Task<(List<PropertyRecord> Records, int HailEventCount)> GetPropertiesAsync(
+        private async Task<(List<PropertyRecord> Records, int HailEventCount, List<HailEventDto> HailEvents)> GetPropertiesAsync(
             string centerAddress, double centerLat, double centerLng, double radiusMiles,
             string stateAbbr = "")
         {
@@ -378,7 +378,15 @@ namespace RoofingLeadGeneration.Controllers
             var records = new List<PropertyRecord> { centerRecord };
             records.AddRange(neighbourRecords);
 
-            return (records, hailEvents.Count);
+            var hailDtos = hailEvents.Select(e => new HailEventDto
+            {
+                Lat        = Math.Round(e.Lat, 6),
+                Lng        = Math.Round(e.Lng, 6),
+                SizeInches = Math.Round(e.SizeInches, 2),
+                Date       = e.Date.ToString("yyyy-MM-dd"),
+                Source     = e.Source
+            }).ToList();
+            return (records, hailEvents.Count, hailDtos);
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -526,8 +534,362 @@ namespace RoofingLeadGeneration.Controllers
         }
 
         // ─────────────────────────────────────────────────────────────────
-        // DTOs
+        // GET /RoofHealth/StormEvents
+        //   lat, lng      — map center (required)
+        //   state         — 2-letter state abbr; auto-detected via Nominatim if blank
+        //   radiusMiles   — search radius (5–200, default 50)
+        //   minHailInches — minimum hail size filter (0.25–3.0, default 0.75)
+        //   includeWind   — include wind gust events in clustering (default true)
+        //   lookbackDays  — how far back to search (7–365, default 90)
+        // Returns storm clusters ranked by relevancy score.
         // ─────────────────────────────────────────────────────────────────
+        [HttpGet("StormEvents")]
+        public async Task<IActionResult> StormEvents(
+            double lat = 0, double lng = 0, string state = "",
+            double radiusMiles   = 50,   double minHailInches = 0.75,
+            bool   includeWind   = true, int    lookbackDays  = 90)
+        {
+            if (lat == 0 && lng == 0)
+                return BadRequest(new { error = "lat and lng are required" });
+
+            lookbackDays  = Math.Clamp(lookbackDays,  7,    365);
+            radiusMiles   = Math.Clamp(radiusMiles,   5,    200);
+            minHailInches = Math.Clamp(minHailInches, 0.25, 3.0);
+
+            // Auto-detect state if caller didn't supply one
+            var stateAbbr = state?.Trim().ToUpperInvariant() ?? "";
+            if (stateAbbr.Length != 2)
+                stateAbbr = await _realData.GetStateFromLatLngAsync(lat, lng);
+
+            _logger.LogInformation(
+                "StormEvents: lat={Lat} lng={Lng} state={State} r={R} minHail={MinHail} wind={Wind} days={Days}",
+                lat, lng, stateAbbr, radiusMiles, minHailInches, includeWind, lookbackDays);
+
+            var clusters = await _realData.GetStormClustersAsync(
+                lat, lng, radiusMiles, stateAbbr, minHailInches, includeWind, lookbackDays);
+
+            var dtos = clusters.Select(c => new StormClusterDto
+            {
+                Id            = c.Id,
+                Date          = c.Date.ToString("yyyy-MM-dd"),
+                Lat           = c.Lat,
+                Lng           = c.Lng,
+                MaxHailInches = c.MaxHailInches,
+                MaxWindMph    = c.MaxWindMph,
+                HailReports   = c.HailReports,
+                WindReports   = c.WindReports,
+                Score         = c.RelevancyScore,
+            }).ToList();
+
+            var opts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+            return Json(new
+            {
+                storms      = dtos,
+                count       = dtos.Count,
+                lookbackDays,
+                state       = stateAbbr
+            }, opts);
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // GET /RoofHealth/WmsLayers
+        //   Fetches Iowa State Mesonet MRMS WMS GetCapabilities and returns
+        //   all available layer names as JSON — use this to verify the correct
+        //   MESH layer name when the tile overlay isn't rendering.
+        //   Open in browser: /RoofHealth/WmsLayers
+        // ─────────────────────────────────────────────────────────────────
+        [HttpGet("WmsLayers")]
+        public async Task<IActionResult> WmsLayers()
+        {
+            // Probe multiple WMS endpoints — the precipitation mrms.cgi doesn't have MESH
+            var endpoints = new[]
+            {
+                "https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms.cgi",
+                "https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0r.cgi",
+                "https://mesonet.agron.iastate.edu/cgi-bin/wms/us/hail.cgi",
+                "https://opengeo.ncep.noaa.gov/geoserver/conus/ows",
+                "https://mapservices.weather.noaa.gov/eventdriven/services/radar/radar_base_reflectivity/MapServer/WMSServer",
+            };
+
+            using var http = new System.Net.Http.HttpClient();
+            http.DefaultRequestHeaders.Add("User-Agent", "StormLeadPro/1.0");
+            http.Timeout = TimeSpan.FromSeconds(8);
+
+            var results = new List<object>();
+            foreach (var baseUrl in endpoints)
+            {
+                var capUrl = baseUrl + "?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.1.1";
+                try
+                {
+                    var xml    = await http.GetStringAsync(capUrl);
+                    var layers = new List<string>();
+                    var doc    = new System.Xml.XmlDocument();
+                    doc.LoadXml(xml);
+                    foreach (System.Xml.XmlNode layer in doc.GetElementsByTagName("Layer"))
+                    {
+                        var nameNode = layer.SelectSingleNode("Name");
+                        if (nameNode != null && !string.IsNullOrWhiteSpace(nameNode.InnerText))
+                            layers.Add(nameNode.InnerText.Trim());
+                    }
+                    var unique = layers.Distinct().OrderBy(x => x).ToList();
+                    results.Add(new
+                    {
+                        url        = baseUrl,
+                        status     = "ok",
+                        layerCount = unique.Count,
+                        meshLayers = unique.Where(l =>
+                            l.Contains("mesh", StringComparison.OrdinalIgnoreCase) ||
+                            l.Contains("hail", StringComparison.OrdinalIgnoreCase)).ToList(),
+                        allLayers  = unique
+                    });
+                }
+                catch (Exception ex)
+                {
+                    results.Add(new { url = baseUrl, status = "error", error = ex.Message });
+                }
+            }
+            return Json(results);
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // GET /RoofHealth/NhpProbe
+        //   Tests candidate NHP / ArcGIS endpoints to find the working one.
+        //   Open in browser: /RoofHealth/NhpProbe
+        // ─────────────────────────────────────────────────────────────────
+        [HttpGet("NhpProbe")]
+        public async Task<IActionResult> NhpProbe()
+        {
+            // Bounding box over Dallas TX — used to test each endpoint
+            const string envelope = "-97.1,32.5,-96.4,33.1";
+
+            var candidates = new[]
+            {
+                // Candidate 1 — speculative URL used in current code
+                "https://services1.arcgis.com/A6seFM3Tl8hPB0Q6/arcgis/rest/services/NHP_HailSwath_MRMS_MESH/FeatureServer/0/query",
+                // Candidate 2 — alternate org ID pattern for Western University
+                "https://services.arcgis.com/A6seFM3Tl8hPB0Q6/arcgis/rest/services/NHP_HailSwath_MRMS_MESH/FeatureServer/0/query",
+                // Candidate 3 — public NHP data via ArcGIS Online
+                "https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/NHP_HailSwath/FeatureServer/0/query",
+                // Candidate 4 — Iowa State tile cache MESH product probe
+                "https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-MESH/0/0/0.png",
+                // Candidate 5 — Iowa State MRMS archive info
+                "https://mesonet.agron.iastate.edu/api/1/currents.geojson?network=MESH",
+            };
+
+            using var http = new System.Net.Http.HttpClient();
+            http.DefaultRequestHeaders.Add("User-Agent", "StormLeadPro/1.0");
+            http.Timeout = TimeSpan.FromSeconds(8);
+
+            var results = new List<object>();
+            foreach (var url in candidates)
+            {
+                try
+                {
+                    // ArcGIS feature service queries need POST with params
+                    string testUrl = url;
+                    System.Net.Http.HttpResponseMessage resp;
+
+                    if (url.Contains("FeatureServer"))
+                    {
+                        var qp = new Dictionary<string, string>
+                        {
+                            ["f"]             = "json",
+                            ["where"]         = "1=1",
+                            ["geometry"]      = envelope,
+                            ["geometryType"]  = "esriGeometryEnvelope",
+                            ["inSR"]          = "4326",
+                            ["outFields"]     = "*",
+                            ["resultRecordCount"] = "1"
+                        };
+                        resp = await http.PostAsync(url, new FormUrlEncodedContent(qp));
+                    }
+                    else
+                    {
+                        resp = await http.GetAsync(url);
+                    }
+
+                    var body    = await resp.Content.ReadAsStringAsync();
+                    var preview = body.Length > 300 ? body[..300] + "…" : body;
+                    results.Add(new
+                    {
+                        url,
+                        status      = (int)resp.StatusCode,
+                        ok          = resp.IsSuccessStatusCode,
+                        bodyPreview = preview
+                    });
+                }
+                catch (Exception ex)
+                {
+                    results.Add(new { url, status = 0, ok = false, bodyPreview = ex.Message });
+                }
+            }
+            return Json(results);
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // GET /RoofHealth/NhpSwathDebug
+        //   Runs all three ArcGIS search strategies and shows what each returns.
+        //   Use this to verify that the NHP hail swath feature service can be found.
+        //   Open in browser: /RoofHealth/NhpSwathDebug
+        // ─────────────────────────────────────────────────────────────────
+        [HttpGet("NhpSwathDebug")]
+        public async Task<IActionResult> NhpSwathDebug()
+        {
+            var searches = new[]
+            {
+                "https://hub.arcgis.com/api/v3/datasets?q=hail+swath+MRMS+MESH&filter[access]=public&limit=5",
+                "https://www.arcgis.com/sharing/rest/search?q=NHP+hail+swath+MRMS+MESH&num=10&f=json",
+                "https://www.arcgis.com/sharing/rest/search?q=hail+swath+MRMS+type:Feature+Service&num=5&f=json",
+            };
+
+            using var http = new System.Net.Http.HttpClient();
+            http.DefaultRequestHeaders.Add("User-Agent", "StormLeadPro/1.0");
+            http.Timeout = TimeSpan.FromSeconds(12);
+
+            var results = new List<object>();
+            foreach (var url in searches)
+            {
+                try
+                {
+                    var body    = await http.GetStringAsync(url);
+                    var preview = body.Length > 600 ? body[..600] + "…" : body;
+                    results.Add(new { url, status = "ok", bodyPreview = preview, length = body.Length });
+                }
+                catch (Exception ex)
+                {
+                    results.Add(new { url, status = "error", error = ex.Message });
+                }
+            }
+            return Json(results, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // GET /RoofHealth/NhpFieldsDebug
+        //   Resolves the NHP feature service URL, fetches layer metadata (geometry
+        //   type + all field names), and runs a 2-record sample query over Dallas.
+        //   Use after NhpSwathDebug confirms the search is working.
+        // ─────────────────────────────────────────────────────────────────
+        [HttpGet("NhpFieldsDebug")]
+        public async Task<IActionResult> NhpFieldsDebug()
+        {
+            // Reuse the same search strategy as GetMrmsHailSwathGeoJsonAsync
+            var searches = new[]
+            {
+                "https://hub.arcgis.com/api/v3/datasets?q=hail+swath+MRMS+MESH&filter%5Baccess%5D=public&limit=5",
+                "https://www.arcgis.com/sharing/rest/search?q=NHP+hail+swath+MRMS+MESH&num=10&f=json",
+            };
+
+            using var http = new System.Net.Http.HttpClient();
+            http.DefaultRequestHeaders.Add("User-Agent", "StormLeadPro/1.0");
+            http.Timeout = TimeSpan.FromSeconds(12);
+
+            // Step 1: find the FeatureServer URL
+            string? svcUrl = null;
+            foreach (var s in searches)
+            {
+                try
+                {
+                    var body = await http.GetStringAsync(s);
+                    // Pull the url field out of each result manually
+                    using var doc = JsonDocument.Parse(body);
+                    var root = doc.RootElement;
+                    // ArcGIS Online format
+                    if (root.TryGetProperty("results", out var res))
+                    {
+                        foreach (var item in res.EnumerateArray())
+                        {
+                            if (item.TryGetProperty("url", out var u))
+                            {
+                                var raw = u.GetString() ?? "";
+                                if (raw.Contains("FeatureServer", StringComparison.OrdinalIgnoreCase))
+                                { svcUrl = raw.TrimEnd('/'); break; }
+                            }
+                        }
+                    }
+                    if (!string.IsNullOrEmpty(svcUrl)) break;
+                }
+                catch { }
+            }
+
+            if (string.IsNullOrEmpty(svcUrl))
+                return Json(new { error = "No FeatureServer URL found in any search. Run /RoofHealth/NhpSwathDebug first." });
+
+            var result = new System.Collections.Generic.Dictionary<string, object>
+            {
+                ["resolvedServiceUrl"] = svcUrl
+            };
+
+            // Step 2: fetch layer 0 metadata
+            try
+            {
+                var metaBody = await http.GetStringAsync(svcUrl + "/0?f=json");
+                using var metaDoc = JsonDocument.Parse(metaBody);
+                var metaRoot = metaDoc.RootElement;
+
+                var geomType = metaRoot.TryGetProperty("geometryType", out var gt) ? gt.GetString() : "unknown";
+                result["geometryType"] = geomType ?? "unknown";
+
+                var fieldList = new List<string>();
+                if (metaRoot.TryGetProperty("fields", out var fields))
+                    foreach (var f in fields.EnumerateArray())
+                        if (f.TryGetProperty("name", out var fn))
+                            fieldList.Add(fn.GetString() ?? "");
+                result["fields"] = fieldList;
+            }
+            catch (Exception ex)
+            {
+                result["metadataError"] = ex.Message;
+            }
+
+            // Step 3: sample query — 2 records from Dallas bbox, no date filter
+            try
+            {
+                var qp = new Dictionary<string, string>
+                {
+                    ["f"]                 = "json",
+                    ["outFields"]         = "*",
+                    ["where"]             = "1=1",
+                    ["geometry"]          = "-97.1,32.5,-96.4,33.1",
+                    ["geometryType"]      = "esriGeometryEnvelope",
+                    ["spatialRel"]        = "esriSpatialRelIntersects",
+                    ["inSR"]              = "4326",
+                    ["resultRecordCount"] = "2"
+                };
+                var qResp  = await http.PostAsync(svcUrl + "/0/query", new FormUrlEncodedContent(qp));
+                var qBody  = await qResp.Content.ReadAsStringAsync();
+                result["sampleQueryStatus"] = (int)qResp.StatusCode;
+                result["sampleQueryBody"]   = qBody.Length > 1200 ? qBody[..1200] + "…" : qBody;
+            }
+            catch (Exception ex)
+            {
+                result["sampleQueryError"] = ex.Message;
+            }
+
+            return Json(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // GET /RoofHealth/HailSwath
+        //   Returns individual LSR + SPC hail event reports as GeoJSON Points
+        //   for the given bounding box and lookback window.
+        //   Used by the "Hail Reports" overlay toggle in Storm Explorer.
+        // ─────────────────────────────────────────────────────────────────
+        [HttpGet("HailSwath")]
+        public async Task<IActionResult> HailSwath(
+            double minLat = 0, double maxLat = 0,
+            double minLng = 0, double maxLng = 0,
+            int    lookbackDays = 90)
+        {
+            if (minLat == 0 && maxLat == 0)
+                return Content("{\"type\":\"FeatureCollection\",\"features\":[]}", "application/json");
+
+            var geojson = await _realData.GetHailEventsGeoJsonAsync(
+                minLat, maxLat, minLng, maxLng, lookbackDays);
+
+            return Content(geojson, "application/json");
+        }
+
+        // DTOs
 
         private class GeoResult
         {
@@ -535,6 +897,28 @@ namespace RoofingLeadGeneration.Controllers
             public double Lat        { get; set; }
             public double Lng        { get; set; }
             public string StateAbbr  { get; set; } = "";
+        }
+
+        private class HailEventDto
+        {
+            [JsonPropertyName("lat")]        public double Lat        { get; set; }
+            [JsonPropertyName("lng")]        public double Lng        { get; set; }
+            [JsonPropertyName("sizeInches")] public double SizeInches { get; set; }
+            [JsonPropertyName("date")]       public string Date       { get; set; } = "";
+            [JsonPropertyName("source")]     public string Source     { get; set; } = "";
+        }
+
+        private class StormClusterDto
+        {
+            [JsonPropertyName("id")]            public string Id            { get; set; } = "";
+            [JsonPropertyName("date")]          public string Date          { get; set; } = "";
+            [JsonPropertyName("lat")]           public double Lat           { get; set; }
+            [JsonPropertyName("lng")]           public double Lng           { get; set; }
+            [JsonPropertyName("maxHailInches")] public double MaxHailInches { get; set; }
+            [JsonPropertyName("maxWindMph")]    public double MaxWindMph    { get; set; }
+            [JsonPropertyName("hailReports")]   public int    HailReports   { get; set; }
+            [JsonPropertyName("windReports")]   public int    WindReports   { get; set; }
+            [JsonPropertyName("score")]         public double Score         { get; set; }
         }
 
         private class PropertyRecord

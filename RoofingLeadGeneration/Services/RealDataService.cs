@@ -646,6 +646,362 @@ out center;";
         }
 
         // ─────────────────────────────────────────────────────────────────
+        // 2d. Iowa State Mesonet LSR  –  wind gust events (type=G)
+        //     Mirrors the hail LSR but returns non-thunderstorm wind reports.
+        // ─────────────────────────────────────────────────────────────────
+        public record WindEvent(double Lat, double Lng, double SpeedMph, DateTime Date, string Source);
+
+        public async Task<List<WindEvent>> GetMesonetLsrWindAsync(
+            double lat, double lng, double radiusMiles, string stateAbbr, int lookbackDays = 90)
+        {
+            if (string.IsNullOrWhiteSpace(stateAbbr)) return new List<WindEvent>();
+
+            double filterMiles = Math.Max(radiusMiles * 2, 10.0);
+            var endTime   = DateTime.UtcNow;
+            var startTime = endTime.AddDays(-lookbackDays);
+
+            var sts = startTime.ToString("yyyyMMddHHmm");
+            var ets = endTime.ToString("yyyyMMddHHmm");
+            var url = $"https://mesonet.agron.iastate.edu/geojson/lsr.php" +
+                      $"?sts={sts}&ets={ets}" +
+                      $"&states={Uri.EscapeDataString(stateAbbr.ToUpper())}" +
+                      $"&type=G&fmt=geojson";
+            try
+            {
+                using var client = _httpFactory.CreateClient("mesonet");
+                var resp = await client.GetAsync(url);
+                if (!resp.IsSuccessStatusCode) return new List<WindEvent>();
+                var json = await resp.Content.ReadAsStringAsync();
+                return ParseMesonetLsrWindGeoJson(json, lat, lng, filterMiles);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Mesonet LSR wind fetch failed");
+                return new List<WindEvent>();
+            }
+        }
+
+        private static List<WindEvent> ParseMesonetLsrWindGeoJson(
+            string json, double centerLat, double centerLng, double filterMiles)
+        {
+            var results = new List<WindEvent>();
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("features", out var features)) return results;
+
+                foreach (var feature in features.EnumerateArray())
+                {
+                    if (!feature.TryGetProperty("properties", out var props)) continue;
+                    if (!feature.TryGetProperty("geometry",   out var geom))  continue;
+                    if (!geom.TryGetProperty("coordinates",   out var coords)) continue;
+                    var coordArr = coords.EnumerateArray().ToArray();
+                    if (coordArr.Length < 2) continue;
+
+                    double wLng = coordArr[0].GetDouble();
+                    double wLat = coordArr[1].GetDouble();
+                    if (HaversineDistanceMiles(centerLat, centerLng, wLat, wLng) > filterMiles) continue;
+
+                    double? speedMph = GetDoubleField(props, "magnitude") ?? GetDoubleField(props, "magf");
+
+                    DateTime date = DateTime.UtcNow.AddDays(-30);
+                    if (props.TryGetProperty("valid", out var vt))
+                        DateTime.TryParse(vt.GetString(), null,
+                            System.Globalization.DateTimeStyles.RoundtripKind, out date);
+
+                    results.Add(new WindEvent(wLat, wLng, speedMph ?? 0, date, "lsr-wind"));
+                }
+            }
+            catch { }
+            return results;
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Nominatim reverse geocode — detect state for Storm Explorer
+        //   Uses the same "overpass" HttpClient (no key, browser-style UA required)
+        // ─────────────────────────────────────────────────────────────────
+        public async Task<string> GetStateFromLatLngAsync(double lat, double lng)
+        {
+            try
+            {
+                using var client = _httpFactory.CreateClient("overpass");
+                client.DefaultRequestHeaders.TryAddWithoutValidation(
+                    "User-Agent", "StormLeadPro/1.0");
+                var url  = $"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lng}";
+                var resp = await client.GetAsync(url);
+                if (!resp.IsSuccessStatusCode) return "";
+                var json = await resp.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("address", out var addr))
+                {
+                    // ISO3166-2-lvl4 → "US-TX" → we keep only "TX"
+                    if (addr.TryGetProperty("ISO3166-2-lvl4", out var lvl4))
+                    {
+                        var code = lvl4.GetString() ?? "";
+                        return code.Length > 3 ? code[3..] : code;
+                    }
+                    if (addr.TryGetProperty("state_code", out var sc))
+                        return sc.GetString() ?? "";
+                }
+                return "";
+            }
+            catch { return ""; }
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // 2e. NOAA SPC Local Storm Reports  –  hail (last 3 days only)
+        //     Near-real-time CSV feed, typically available within minutes.
+        //     URL: https://www.spc.noaa.gov/climo/reports/YYMMDD_rpts_hail.csv
+        //     Columns: Time,Size,Location,County,State,Lat,Lon,Comments
+        //     Used to fill the gap before Iowa State Mesonet indexes recent LSRs.
+        // ─────────────────────────────────────────────────────────────────
+        public async Task<List<HailEvent>> GetSpcRecentHailAsync(
+            double lat, double lng, double radiusMiles, int lookbackDays = 3)
+        {
+            var results  = new List<HailEvent>();
+            double filterMiles = Math.Max(radiusMiles * 2, 50.0);
+            int daysToFetch = Math.Min(lookbackDays, 3); // SPC CSV only used for recent gap
+
+            using var client = _httpFactory.CreateClient();
+            client.DefaultRequestHeaders.Add("User-Agent", "StormLeadPro/1.0");
+
+            for (int d = 0; d < daysToFetch; d++)
+            {
+                var date   = DateTime.UtcNow.Date.AddDays(-d);
+                var yymmd  = date.ToString("yyMMdd");
+                var url    = $"https://www.spc.noaa.gov/climo/reports/{yymmd}_rpts_hail.csv";
+                try
+                {
+                    var resp = await client.GetAsync(url);
+                    if (!resp.IsSuccessStatusCode) continue;
+                    var csv = await resp.Content.ReadAsStringAsync();
+                    results.AddRange(ParseSpcHailCsv(csv, date, lat, lng, filterMiles));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "SPC hail CSV fetch failed for {Date}", yymmd);
+                }
+            }
+            return results;
+        }
+
+        private static List<HailEvent> ParseSpcHailCsv(
+            string csv, DateTime date, double centerLat, double centerLng, double filterMiles)
+        {
+            var results = new List<HailEvent>();
+            if (string.IsNullOrWhiteSpace(csv)) return results;
+
+            foreach (var rawLine in csv.Split('\n'))
+            {
+                var line = rawLine.Trim();
+                if (string.IsNullOrEmpty(line)) continue;
+
+                // Skip header row
+                if (line.StartsWith("Time", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var cols = line.Split(',');
+                if (cols.Length < 7) continue;
+
+                try
+                {
+                    // Col 0: HHMM UTC,  Col 1: size in hundredths of inches (e.g. 100=1.00", 250=2.50"),  Col 5: lat,  Col 6: lon
+                    var timeStr  = cols[0].Trim().PadLeft(4, '0');
+                    var sizeStr  = cols[1].Trim();
+                    var latStr   = cols[5].Trim();
+                    var lonStr   = cols[6].Trim();
+
+                    if (!double.TryParse(sizeStr, System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out double sizeRaw))
+                        continue;
+                    // SPC encodes size as hundredths of an inch (integer); convert to inches
+                    double sizeIn = sizeRaw / 100.0;
+                    if (!double.TryParse(latStr,  System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out double eLat))
+                        continue;
+                    if (!double.TryParse(lonStr,  System.Globalization.NumberStyles.Any,
+                            System.Globalization.CultureInfo.InvariantCulture, out double eLng))
+                        continue;
+
+                    // Parse HHMM into a full UTC datetime
+                    if (timeStr.Length >= 4
+                        && int.TryParse(timeStr[..2], out int hh)
+                        && int.TryParse(timeStr[2..4], out int mm))
+                    {
+                        var eventTime = date.AddHours(hh).AddMinutes(mm);
+                        double dist   = HaversineDistanceMiles(centerLat, centerLng, eLat, eLng);
+                        if (dist <= filterMiles && sizeIn > 0)
+                        {
+                            results.Add(new HailEvent
+                            {
+                                Lat        = eLat,
+                                Lng        = eLng,
+                                SizeInches = sizeIn,
+                                Date       = eventTime,
+                                Source     = "SPC/NOAA"
+                            });
+                        }
+                    }
+                }
+                catch { /* skip malformed rows */ }
+            }
+            return results;
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Storm clustering — group LSR point reports into storm events
+        //   Same-day + within 15 mi → one cluster. Wind events within 20 mi
+        //   on the same day are associated and contribute to the score.
+        //
+        //   Relevancy score (0-100):
+        //     • hail   up to 60 pts  (capped at 2.4")
+        //     • recency up to 30 pts  (linear decay over lookback window)
+        //     • wind    up to 10 pts  (capped at 50 mph)
+        // ─────────────────────────────────────────────────────────────────
+        public class StormCluster
+        {
+            public string   Id             { get; set; } = "";
+            public DateTime Date           { get; set; }
+            public double   Lat            { get; set; }
+            public double   Lng            { get; set; }
+            public double   MaxHailInches  { get; set; }
+            public double   MaxWindMph     { get; set; }
+            public int      HailReports    { get; set; }
+            public int      WindReports    { get; set; }
+            public double   RelevancyScore { get; set; }
+        }
+
+        public async Task<List<StormCluster>> GetStormClustersAsync(
+            double lat, double lng, double radiusMiles,
+            string stateAbbr, double minHailInches, bool includeWind, int lookbackDays)
+        {
+            var endTime   = DateTime.UtcNow;
+            var startTime = endTime.AddDays(-lookbackDays);
+
+            // Fetch LSR, SPC recent, and wind in parallel
+            var lsrTask  = GetMesonetLsrHailInWindowAsync(lat, lng, radiusMiles, stateAbbr, startTime, endTime);
+            var spcTask  = GetSpcRecentHailAsync(lat, lng, radiusMiles, Math.Min(lookbackDays, 3));
+            var windTask = includeWind
+                ? GetMesonetLsrWindAsync(lat, lng, radiusMiles, stateAbbr, lookbackDays)
+                : Task.FromResult(new List<WindEvent>());
+
+            await Task.WhenAll(lsrTask, spcTask, windTask);
+
+            // Merge LSR + SPC, deduplicate by proximity and date
+            var lsrEvents = await lsrTask;
+            var spcEvents = await spcTask;
+            var combined  = new List<HailEvent>(lsrEvents);
+            foreach (var spc in spcEvents)
+            {
+                // Only add SPC report if no LSR report exists within 5 mi on the same day
+                bool duplicate = combined.Any(e =>
+                    e.Date.Date == spc.Date.Date &&
+                    HaversineDistanceMiles(e.Lat, e.Lng, spc.Lat, spc.Lng) < 5.0);
+                if (!duplicate) combined.Add(spc);
+            }
+
+            var hailEvents = combined
+                .Where(e => e.SizeInches >= minHailInches && e.Date >= startTime)
+                .ToList();
+            var windEvents = await windTask;
+
+            _logger.LogInformation(
+                "StormClusters: {Lsr} LSR + {Spc} SPC = {Total} hail reports, {Wind} wind reports → clustering",
+                lsrEvents.Count, spcEvents.Count, hailEvents.Count, windEvents.Count);
+
+            return ClusterIntoStorms(hailEvents, windEvents, lookbackDays);
+        }
+
+        /// <summary>Single-window hail LSR fetch for a specific date range.</summary>
+        private async Task<List<HailEvent>> GetMesonetLsrHailInWindowAsync(
+            double lat, double lng, double radiusMiles, string stateAbbr,
+            DateTime startTime, DateTime endTime)
+        {
+            if (string.IsNullOrWhiteSpace(stateAbbr)) return new List<HailEvent>();
+
+            double filterMiles = Math.Max(radiusMiles * 2, 10.0);
+            var sts = startTime.ToString("yyyyMMddHHmm");
+            var ets = endTime.ToString("yyyyMMddHHmm");
+            var url = $"https://mesonet.agron.iastate.edu/geojson/lsr.php" +
+                      $"?sts={sts}&ets={ets}" +
+                      $"&states={Uri.EscapeDataString(stateAbbr.ToUpper())}" +
+                      $"&type=H&fmt=geojson";
+            try
+            {
+                using var client = _httpFactory.CreateClient("mesonet");
+                var resp = await client.GetAsync(url);
+                if (!resp.IsSuccessStatusCode) return new List<HailEvent>();
+                var json = await resp.Content.ReadAsStringAsync();
+                return ParseMesonetLsrGeoJson(json, lat, lng, filterMiles);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Mesonet LSR hail window fetch failed");
+                return new List<HailEvent>();
+            }
+        }
+
+        private static List<StormCluster> ClusterIntoStorms(
+            List<HailEvent> hailEvents, List<WindEvent> windEvents, int lookbackDays)
+        {
+            var clusters = new List<StormCluster>();
+            var used     = new HashSet<int>();
+
+            for (int i = 0; i < hailEvents.Count; i++)
+            {
+                if (used.Contains(i)) continue;
+
+                var seed    = hailEvents[i];
+                var members = new List<HailEvent> { seed };
+                used.Add(i);
+
+                // Sweep remaining reports: same calendar day + within 15 miles → same storm
+                for (int j = i + 1; j < hailEvents.Count; j++)
+                {
+                    if (used.Contains(j)) continue;
+                    var other    = hailEvents[j];
+                    bool sameDay = seed.Date.Date == other.Date.Date;
+                    bool near    = HaversineDistanceMiles(
+                        seed.Lat, seed.Lng, other.Lat, other.Lng) <= 15;
+                    if (sameDay && near) { members.Add(other); used.Add(j); }
+                }
+
+                double cLat    = members.Average(m => m.Lat);
+                double cLng    = members.Average(m => m.Lng);
+                double maxHail = members.Max(m => m.SizeInches);
+
+                // Associate wind events from the same day within 20 miles
+                var assocWind = windEvents
+                    .Where(w => w.Date.Date == seed.Date.Date &&
+                                HaversineDistanceMiles(cLat, cLng, w.Lat, w.Lng) <= 20)
+                    .ToList();
+
+                double maxWind = assocWind.Count > 0 ? assocWind.Max(w => w.SpeedMph) : 0;
+
+                int    daysAgo  = (int)(DateTime.UtcNow - seed.Date.Date).TotalDays;
+                double hailPts  = Math.Min(maxHail * 25, 60);
+                double recency  = 30.0 * Math.Max(0, 1.0 - (double)daysAgo / Math.Max(lookbackDays, 1));
+                double windPts  = Math.Min(maxWind / 5.0, 10);
+                double score    = Math.Round(hailPts + recency + windPts, 1);
+
+                clusters.Add(new StormCluster
+                {
+                    Id             = $"{seed.Date:yyyy-MM-dd}-{cLat:F3}-{cLng:F3}",
+                    Date           = seed.Date.Date,
+                    Lat            = Math.Round(cLat, 5),
+                    Lng            = Math.Round(cLng, 5),
+                    MaxHailInches  = Math.Round(maxHail, 2),
+                    MaxWindMph     = Math.Round(maxWind, 1),
+                    HailReports    = members.Count,
+                    WindReports    = assocWind.Count,
+                    RelevancyScore = score,
+                });
+            }
+
+            return clusters.OrderByDescending(c => c.RelevancyScore).ToList();
+        }
+
+        // ─────────────────────────────────────────────────────────────────
         // 3. Regrid Parcel API  –  property owner names
         //    Requires a free Regrid token (25 lookups/day on free Starter plan).
         //    Sign up at: https://app.regrid.com
@@ -900,6 +1256,244 @@ out center;";
         }
 
         // ─────────────────────────────────────────────────────────────────
+        // 2f. LSR Hail Swath  –  ground-truth polygon overlay
+        //     Source: Iowa State Mesonet LSR (same feed as Storm Explorer).
+        //     Groups same-day LSR hail reports into buffered polygons showing
+        //     where each storm hit and how large the hail was.  Covers the
+        //     entire US.  NHP ArcGIS data was Canadian-only with no MESH field.
+        // ─────────────────────────────────────────────────────────────────
+
+        // Valid empty FeatureCollection — safe for Leaflet L.geoJSON()
+        private const string EmptyFeatureCollection = "{\"type\":\"FeatureCollection\",\"features\":[]}";
+
+        public async Task<string> GetMrmsHailSwathGeoJsonAsync(
+            double minLat, double maxLat, double minLng, double maxLng, int lookbackDays)
+        {
+            // LSR-based swath generation: cluster same-day hail reports into buffered polygons.
+            try
+            {
+                double centerLat = (minLat + maxLat) / 2;
+                double centerLng = (minLng + maxLng) / 2;
+
+                var stateAbbr = await GetStateFromLatLngAsync(centerLat, centerLng);
+                if (string.IsNullOrWhiteSpace(stateAbbr))
+                    return EmptyFeatureCollection;
+
+                var endTime   = DateTime.UtcNow;
+                var startTime = endTime.AddDays(-lookbackDays);
+
+                // Radius: half the diagonal of the visible bbox, capped at 250 miles
+                double radiusMiles = Math.Min(
+                    HaversineDistanceMiles(minLat, minLng, maxLat, maxLng) * 0.75, 250.0);
+
+                var lsrEvents = await GetMesonetLsrHailInWindowAsync(
+                    centerLat, centerLng, radiusMiles, stateAbbr, startTime, endTime);
+
+                // Trim to bbox with a small margin
+                double margin = 0.05;
+                var inBox = lsrEvents
+                    .Where(e => e.Lat >= minLat - margin && e.Lat <= maxLat + margin &&
+                                e.Lng >= minLng - margin && e.Lng <= maxLng + margin)
+                    .ToList();
+
+                if (inBox.Count == 0)
+                    return EmptyFeatureCollection;
+
+                using var ms     = new System.IO.MemoryStream();
+                using var writer = new System.Text.Json.Utf8JsonWriter(ms);
+                writer.WriteStartObject();
+                writer.WriteString("type", "FeatureCollection");
+                writer.WriteStartArray("features");
+
+                foreach (var dayGrp in inBox.GroupBy(e => e.Date.Date).OrderByDescending(g => g.Key))
+                {
+                    foreach (var cluster in ClusterHailPoints(dayGrp.ToList(), 20.0))
+                    {
+                        var ring = BuildSwathRing(cluster);
+                        if (ring == null) continue;
+
+                        writer.WriteStartObject();
+                        writer.WriteString("type", "Feature");
+
+                        writer.WriteStartObject("geometry");
+                        writer.WriteString("type", "Polygon");
+                        writer.WriteStartArray("coordinates");
+                        writer.WriteStartArray();
+                        foreach (var (rLat, rLng) in ring)
+                        {
+                            writer.WriteStartArray();
+                            writer.WriteNumberValue(Math.Round(rLng, 5));
+                            writer.WriteNumberValue(Math.Round(rLat, 5));
+                            writer.WriteEndArray();
+                        }
+                        writer.WriteEndArray();
+                        writer.WriteEndArray();
+                        writer.WriteEndObject(); // geometry
+
+                        writer.WriteStartObject("properties");
+                        writer.WriteNumber("maxHailIn",  Math.Round(cluster.Max(p => p.SizeInches), 2));
+                        writer.WriteString("date",        dayGrp.Key.ToString("yyyy-MM-dd"));
+                        writer.WriteNumber("reportCount", cluster.Count);
+                        writer.WriteEndObject(); // properties
+
+                        writer.WriteEndObject(); // feature
+                    }
+                }
+
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+                writer.Flush();
+                return System.Text.Encoding.UTF8.GetString(ms.ToArray());
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "LSR hail swath generation failed");
+                return EmptyFeatureCollection;
+            }
+        }
+
+        /// <summary>Cluster hail points: each seed grabs all un-clustered points within maxRadiusMiles.</summary>
+        private static List<List<HailEvent>> ClusterHailPoints(List<HailEvent> points, double maxRadiusMiles)
+        {
+            var clusters = new List<List<HailEvent>>();
+            var used     = new bool[points.Count];
+
+            for (int i = 0; i < points.Count; i++)
+            {
+                if (used[i]) continue;
+                var cluster = new List<HailEvent> { points[i] };
+                used[i] = true;
+
+                for (int j = i + 1; j < points.Count; j++)
+                {
+                    if (used[j]) continue;
+                    if (HaversineDistanceMiles(points[i].Lat, points[i].Lng,
+                                               points[j].Lat, points[j].Lng) <= maxRadiusMiles)
+                    { cluster.Add(points[j]); used[j] = true; }
+                }
+                clusters.Add(cluster);
+            }
+            return clusters;
+        }
+
+        /// <summary>
+        /// Build a closed GeoJSON ring for a cluster of hail reports.
+        /// Single point → 12-gon approximation.  Multiple points → buffered bounding box.
+        /// Buffer ≈ 8 miles so thin corridors still show as a visible polygon.
+        /// </summary>
+        private static List<(double lat, double lng)>? BuildSwathRing(List<HailEvent> cluster)
+        {
+            if (cluster.Count == 0) return null;
+            const double BufDeg = 0.12;   // ~8 miles in latitude
+
+            if (cluster.Count == 1)
+            {
+                var cLat = cluster[0].Lat;
+                var cLng = cluster[0].Lng;
+                var ring = new List<(double, double)>();
+                for (int i = 0; i <= 12; i++)
+                {
+                    double a = 2 * Math.PI * i / 12;
+                    ring.Add((cLat + BufDeg * Math.Sin(a), cLng + BufDeg * Math.Cos(a)));
+                }
+                return ring;
+            }
+
+            double lo = cluster.Min(p => p.Lat) - BufDeg;
+            double hi = cluster.Max(p => p.Lat) + BufDeg;
+            double lf = cluster.Min(p => p.Lng) - BufDeg;
+            double rt = cluster.Max(p => p.Lng) + BufDeg;
+
+            return new List<(double lat, double lng)>
+            {
+                (lo, lf), (lo, rt), (hi, rt), (hi, lf), (lo, lf)   // closed ring
+            };
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        // Hail Reports GeoJSON  –  individual LSR + SPC events as Point features
+        //   Used by the "Hail Reports" map overlay toggle.
+        //   Returns up to 500 events within the viewport bbox, sorted largest first.
+        // ─────────────────────────────────────────────────────────────────
+        public async Task<string> GetHailEventsGeoJsonAsync(
+            double minLat, double maxLat, double minLng, double maxLng, int lookbackDays)
+        {
+            double centerLat  = (minLat + maxLat) / 2.0;
+            double centerLng  = (minLng + maxLng) / 2.0;
+            // Radius = distance from center to NE corner, padded 20 % to avoid edge gaps
+            double radiusMiles = Math.Min(
+                HaversineDistanceMiles(centerLat, centerLng, maxLat, maxLng) * 1.2,
+                200.0);
+
+            var stateAbbr = await GetStateFromLatLngAsync(centerLat, centerLng);
+
+            var endTime   = DateTime.UtcNow;
+            var startTime = endTime.AddDays(-lookbackDays);
+
+            var lsrTask = GetMesonetLsrHailInWindowAsync(
+                centerLat, centerLng, radiusMiles, stateAbbr, startTime, endTime);
+            var spcTask = GetSpcRecentHailAsync(
+                centerLat, centerLng, radiusMiles, Math.Min(lookbackDays, 3));
+
+            await Task.WhenAll(lsrTask, spcTask);
+
+            // Merge LSR + SPC, deduplicating within 5 mi on same day
+            var allEvents = new List<HailEvent>(lsrTask.Result);
+            foreach (var spcEvt in spcTask.Result)
+            {
+                bool dup = allEvents.Any(e =>
+                    e.Date.Date == spcEvt.Date.Date &&
+                    HaversineDistanceMiles(e.Lat, e.Lng, spcEvt.Lat, spcEvt.Lng) < 5.0);
+                if (!dup) allEvents.Add(spcEvt);
+            }
+
+            // Filter to exact bbox, sort largest hail first, cap at 500
+            var filtered = allEvents
+                .Where(e => e.Lat >= minLat && e.Lat <= maxLat &&
+                            e.Lng >= minLng && e.Lng <= maxLng)
+                .OrderByDescending(e => e.SizeInches)
+                .Take(500)
+                .ToList();
+
+            _logger.LogInformation(
+                "HailEventsGeoJson: {Count} events in bbox [{MinLat},{MinLng}→{MaxLat},{MaxLng}]",
+                filtered.Count, minLat, minLng, maxLat, maxLng);
+
+            using var ms     = new System.IO.MemoryStream();
+            using var writer = new System.Text.Json.Utf8JsonWriter(ms);
+            writer.WriteStartObject();
+            writer.WriteString("type", "FeatureCollection");
+            writer.WriteStartArray("features");
+
+            foreach (var ev in filtered)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("type", "Feature");
+
+                writer.WriteStartObject("geometry");
+                writer.WriteString("type", "Point");
+                writer.WriteStartArray("coordinates");
+                writer.WriteNumberValue(Math.Round(ev.Lng, 5));
+                writer.WriteNumberValue(Math.Round(ev.Lat, 5));
+                writer.WriteEndArray();
+                writer.WriteEndObject(); // geometry
+
+                writer.WriteStartObject("properties");
+                writer.WriteNumber("maxHailIn", Math.Round(ev.SizeInches, 2));
+                writer.WriteString("date",      ev.Date.ToString("yyyy-MM-dd"));
+                writer.WriteString("source",    ev.Source);
+                writer.WriteEndObject(); // properties
+
+                writer.WriteEndObject(); // feature
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            writer.Flush();
+            return System.Text.Encoding.UTF8.GetString(ms.ToArray());
+        }
+
+        // ─────────────────────────────────────────────────────────────────
         // Haversine distance helper (used by RoofHealthController)
         // ─────────────────────────────────────────────────────────────────
         public static double HaversineDistanceMiles(
@@ -918,6 +1512,7 @@ out center;";
         // ─────────────────────────────────────────────────────────────────
         // Shared helper
         // ─────────────────────────────────────────────────────────────────
+
         private static double? GetDoubleField(JsonElement el, string prop)
         {
             if (!el.TryGetProperty(prop, out var v)) return null;

@@ -10,8 +10,10 @@
     let currentAddress = '';
     let currentLat     = 0;
     let currentLng     = 0;
-    let leafletMap     = null;
-    let mapMarkers     = [];
+    let leafletMap          = null;
+    let mapMarkers          = [];
+    let hailOverlayLayer    = null;
+    let hailOverlayVisible  = true;
 
     // ─── Scan ─────────────────────────────────────────────────────
     async function runScan() {
@@ -94,7 +96,7 @@
             }
         }
 
-        // Show results section
+        switchMainTab('neighborhood');
         document.getElementById('results').classList.remove('hidden');
         document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
@@ -104,6 +106,7 @@
 
         // Init / re-init map
         initMap(data.lat, data.lng);
+        renderHailOverlay(data.hailEvents || []);
 
         // Apply current filter + sort and render cards
         applyFilterAndSort();
@@ -155,6 +158,35 @@
         };
         toggleCtrl.addTo(leafletMap);
 
+        // Hail overlay toggle (stacks below layer toggle)
+        hailOverlayVisible = true;
+        const hailCtrl = L.control({ position: 'topright' });
+        hailCtrl.onAdd = () => {
+            const div = L.DomUtil.create('div');
+            div.innerHTML = `<button id="hailLayerBtn" title="Toggle hail event circles"
+                style="background:#1e293b;border:1px solid #475569;color:#cbd5e1;
+                       padding:5px 10px;border-radius:8px;font-size:11px;font-weight:600;
+                       cursor:pointer;display:flex;align-items:center;gap:5px;
+                       box-shadow:0 2px 6px rgba(0,0,0,0.4);margin-top:4px;white-space:nowrap">
+                <i class="fa-solid fa-cloud-bolt" style="color:#f97316"></i>&nbsp;Hail ON
+            </button>`;
+            L.DomEvent.disableClickPropagation(div);
+            div.querySelector('button').addEventListener('click', () => {
+                hailOverlayVisible = !hailOverlayVisible;
+                if (hailOverlayLayer) {
+                    if (hailOverlayVisible) hailOverlayLayer.addTo(leafletMap);
+                    else leafletMap.removeLayer(hailOverlayLayer);
+                }
+                const btn = div.querySelector('button');
+                btn.innerHTML = hailOverlayVisible
+                    ? '<i class="fa-solid fa-cloud-bolt" style="color:#f97316"></i>&nbsp;Hail ON'
+                    : '<i class="fa-solid fa-cloud-bolt" style="color:#94a3b8"></i>&nbsp;Hail OFF';
+                btn.style.opacity = hailOverlayVisible ? '1' : '0.55';
+            });
+            return div;
+        };
+        hailCtrl.addTo(leafletMap);
+
         // Center marker (star)
         const centerIcon = L.divIcon({
             html: `<div style="width:16px;height:16px;background:#f97316;border:3px solid #fff;border-radius:50%;box-shadow:0 0 8px rgba(249,115,22,0.8)"></div>`,
@@ -194,6 +226,51 @@
 
             mapMarkers.push(m);
         });
+    }
+
+    // ── Hail event overlay ────────────────────────────────────────
+    function renderHailOverlay(events) {
+        if (!leafletMap) return;
+
+        // Clear any previous layer
+        if (hailOverlayLayer) {
+            leafletMap.removeLayer(hailOverlayLayer);
+            hailOverlayLayer = null;
+        }
+        if (!events || events.length === 0) return;
+
+        hailOverlayLayer = L.layerGroup();
+        events.forEach(function(e) {
+            var color  = hailOverlayColor(e.sizeInches);
+            var radius = Math.max(80, Math.min(600, e.sizeInches * 180)); // metres, scaled by size
+            L.circle([e.lat, e.lng], {
+                radius:      radius,
+                color:       color,
+                fillColor:   color,
+                fillOpacity: 0.18,
+                weight:      1.5,
+                opacity:     0.65
+            })
+            .bindTooltip(
+                '<div style="font-family:system-ui;color:#f1f5f9;min-width:110px">' +
+                '<b>' + e.sizeInches.toFixed(2) + '" hail</b>' +
+                '<br><span style="color:#94a3b8;font-size:11px">' + (e.date || '') + '</span>' +
+                '<br><span style="color:#64748b;font-size:10px">' + (e.source || '').toUpperCase() + '</span>' +
+                '</div>',
+                { direction: 'top', sticky: true }
+            )
+            .addTo(hailOverlayLayer);
+        });
+
+        if (hailOverlayVisible) hailOverlayLayer.addTo(leafletMap);
+    }
+
+    function hailOverlayColor(size) {
+        if (size >= 2.00) return '#ef4444'; // red    — golf ball+
+        if (size >= 1.50) return '#f97316'; // orange — ping pong+
+        if (size >= 1.00) return '#f59e0b'; // amber  — quarter+
+        if (size >= 0.75) return '#eab308'; // yellow — penny+
+        return '#84cc16';                   // lime   — pea
     }
 
     function buildPopupHtml(p) {
@@ -552,7 +629,7 @@
         updateSelectionUI();
     }
 
-    // ─── Save Selected ────────────────────────────────────────────
+    // ── Save Selected ─────────────────────────────────────────────
     async function saveSelected() {
         if (selectedIndices.size === 0) { showToast('No properties selected.', false); return; }
 
@@ -598,7 +675,7 @@
     }
 
 
-    // ─── Toast ────────────────────────────────────────────────────
+    // ── Toast ─────────────────────────────────────────────────────────
     let _toastTimer = null;
     function showToast(msg, success) {
         const toast = document.getElementById('toast');
@@ -611,7 +688,44 @@
         _toastTimer = setTimeout(() => toast.classList.remove('show'), 3500);
     }
 
-// ── Mobile nav hamburger (shared across pages) ──────────────────
+// ── Tab switching ─────────────────────────────────────────────
+function switchMainTab(tab) {
+    const isNeighborhood = tab === 'neighborhood';
+
+    // Toggle tab button styles
+    const btnN = document.getElementById('tabBtnNeighborhood');
+    const btnS = document.getElementById('tabBtnStorm');
+    if (btnN) {
+        btnN.classList.toggle('border-brand', isNeighborhood);
+        btnN.classList.toggle('text-white',   isNeighborhood);
+        btnN.classList.toggle('border-transparent', !isNeighborhood);
+        btnN.classList.toggle('text-slate-400',     !isNeighborhood);
+    }
+    if (btnS) {
+        btnS.classList.toggle('border-brand', !isNeighborhood);
+        btnS.classList.toggle('text-white',   !isNeighborhood);
+        btnS.classList.toggle('border-transparent', isNeighborhood);
+        btnS.classList.toggle('text-slate-400',     isNeighborhood);
+    }
+
+    // Show / hide panels
+    const neighborhoodPanel = document.getElementById('neighborhoodPanel');
+    const stormEl           = document.getElementById('stormExplorer');
+
+    if (isNeighborhood) {
+        if (neighborhoodPanel) neighborhoodPanel.classList.remove('hidden');
+        if (stormEl)           stormEl.classList.add('hidden');
+    } else {
+        if (neighborhoodPanel) neighborhoodPanel.classList.add('hidden');
+        if (stormEl)           stormEl.classList.remove('hidden');
+        // Init Storm Explorer map (idempotent -- builds the map only once)
+        if (typeof initStormExplorer === 'function') {
+            initStormExplorer(currentLat || 32.78, currentLng || -96.80);
+        }
+    }
+}
+
+// -- Mobile nav hamburger (shared across pages) --
 function toggleMobileMenu() {
     const menu = document.getElementById('mobileMenu');
     const icon = document.getElementById('mobileMenuIcon');
