@@ -22,6 +22,7 @@ namespace RoofingLeadGeneration.Data
         public DbSet<LeadGenLead>           LeadGenLeads           => Set<LeadGenLead>();
         public DbSet<LeadGenSuppressed>     LeadGenSuppressed      => Set<LeadGenSuppressed>();
         public DbSet<LeadGenContactHistory> LeadGenContactHistory  => Set<LeadGenContactHistory>();
+        public DbSet<LeadGenTarget>         LeadGenTargets         => Set<LeadGenTarget>();
 
         public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -393,6 +394,27 @@ namespace RoofingLeadGeneration.Data
                  .WithMany()
                  .HasForeignKey(h => h.LeadId)
                  .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            // -- LeadGenTarget -----------------------------------------
+            m.Entity<LeadGenTarget>(e =>
+            {
+                e.ToTable("leadgen_targets");
+                e.HasKey(t => t.Id);
+                e.Property(t => t.Id).HasColumnName("id");
+                e.Property(t => t.CampaignId).HasColumnName("campaign_id");
+                e.Property(t => t.Phone).HasColumnName("phone").IsRequired();
+                e.Property(t => t.Address).HasColumnName("address").HasDefaultValue("");
+                e.Property(t => t.AddedAt).HasColumnName("added_at")
+                 .HasDefaultValueSql("datetime('now')");
+
+                e.HasIndex(t => new { t.CampaignId, t.Phone }).IsUnique();
+                e.HasIndex(t => t.CampaignId);
+
+                e.HasOne(t => t.Campaign)
+                 .WithMany()
+                 .HasForeignKey(t => t.CampaignId)
+                 .OnDelete(DeleteBehavior.Cascade);
             });
         }
     }

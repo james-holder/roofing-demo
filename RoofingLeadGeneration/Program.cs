@@ -449,6 +449,25 @@ using (var scope = app.Services.CreateScope())
         cmd.ExecuteNonQuery();
     }
 
+    if (!TableExists("leadgen_targets"))
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE leadgen_targets (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER NOT NULL REFERENCES leadgen_campaigns(id) ON DELETE CASCADE,
+                phone       TEXT    NOT NULL,
+                address     TEXT    NOT NULL DEFAULT '',
+                added_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+        """;
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE UNIQUE INDEX ix_leadgen_targets_campaign_phone ON leadgen_targets(campaign_id, phone)";
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE INDEX ix_leadgen_targets_campaign_id ON leadgen_targets(campaign_id)";
+        cmd.ExecuteNonQuery();
+    }
+
     // ── Seed demo user + leads ────────────────────────────────────────
     var demoEmail = config["Auth:DemoEmail"] ?? "james@repwing.com";
     long demoUserId = 0;

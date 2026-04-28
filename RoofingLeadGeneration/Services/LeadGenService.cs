@@ -372,11 +372,11 @@ namespace RoofingLeadGeneration.Services
 
         private async Task<List<(string Phone, string Address)>> GetCampaignTargetsAsync(long campaignId)
         {
-            // Phase 1: targets are manually entered via the dashboard.
-            // Phase 1.5: replace with bulk skip-trace of parcels in the swath.
-            // For now return empty — blast is a no-op until targets are wired up.
-            await Task.CompletedTask;
-            return new List<(string, string)>();
+            return await _db.LeadGenTargets
+                .Where(t => t.CampaignId == campaignId)
+                .Select(t => new { t.Phone, t.Address })
+                .ToListAsync()
+                .ContinueWith(r => r.Result.Select(t => (t.Phone, t.Address)).ToList());
         }
 
         private static string BuildSmsMessage(LeadGenCampaign campaign)

@@ -1,8 +1,9 @@
 @using RoofingLeadGeneration.Data.Models
 @{
     Layout = null;
-    var campaigns  = ViewBag.Campaigns  as List<LeadGenCampaign> ?? new();
-    var leads      = ViewBag.Leads      as List<LeadGenLead>     ?? new();
+    var campaigns  = ViewBag.Campaigns  as List<LeadGenCampaign>  ?? new();
+    var leads      = ViewBag.Leads      as List<LeadGenLead>      ?? new();
+    var targets    = ViewBag.Targets    as List<LeadGenTarget>    ?? new();
     var suppressed = (int)(ViewBag.Suppressed ?? 0);
 
     string StatusBadge(string s) => s switch {
@@ -241,6 +242,84 @@
         }
     </section>
 
+    <!-- Targets (blast recipients) -->
+    <section>
+        <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest mb-4">
+            <i class="fa-solid fa-mobile-screen-button mr-1.5 text-slate-400"></i>Blast Targets
+            <span class="ml-2 text-slate-500 normal-case font-normal">phone numbers queued per campaign</span>
+        </h2>
+
+        <!-- Add target form -->
+        @{
+            var draftCampaigns = campaigns.Where(c => c.Status == "draft").ToList();
+        }
+        @if (draftCampaigns.Any()) {
+        <form method="post" action="/LeadGen/AddTarget"
+              class="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 mb-4 flex flex-wrap gap-3 items-end">
+            @Html.AntiForgeryToken()
+            <div class="flex flex-col gap-1">
+                <label class="text-xs text-slate-400">Campaign</label>
+                <select name="campaignId" class="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:border-brand focus:outline-none">
+                    @foreach (var c in draftCampaigns) {
+                        <option value="@c.Id">#@c.Id — @c.StateAbbr @c.StormDate.ToString("MMM d")</option>
+                    }
+                </select>
+            </div>
+            <div class="flex flex-col gap-1">
+                <label class="text-xs text-slate-400">Phone</label>
+                <input type="tel" name="phone" required placeholder="+19995551234"
+                       class="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white w-44 focus:border-brand focus:outline-none" />
+            </div>
+            <div class="flex flex-col gap-1 flex-1">
+                <label class="text-xs text-slate-400">Address (optional)</label>
+                <input type="text" name="address" placeholder="123 Main St, Dallas TX"
+                       class="bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:border-brand focus:outline-none" />
+            </div>
+            <button type="submit"
+                    class="px-5 py-2 rounded-lg bg-brand text-white text-sm font-semibold hover:bg-brand-dark transition-colors">
+                <i class="fa-solid fa-plus mr-1"></i>Add
+            </button>
+        </form>
+        } else {
+        <p class="text-slate-500 text-sm mb-4">Create a draft campaign first, then add targets to it.</p>
+        }
+
+        @if (!targets.Any()) {
+        <p class="text-slate-600 text-sm">No targets yet.</p>
+        } else {
+        <div class="overflow-x-auto rounded-xl border border-slate-700/60">
+            <table class="w-full text-sm">
+                <thead class="bg-slate-800/80 text-xs text-slate-400 uppercase tracking-wider">
+                    <tr>
+                        <th class="px-4 py-3 text-left">Campaign</th>
+                        <th class="px-4 py-3 text-left">Phone</th>
+                        <th class="px-4 py-3 text-left">Address</th>
+                        <th class="px-4 py-3 text-left">Added</th>
+                        <th class="px-4 py-3 text-left"></th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-700/40">
+                @foreach (var t in targets) {
+                    <tr class="hover:bg-slate-800/40 transition-colors" id="target-@t.Id">
+                        <td class="px-4 py-3 text-slate-500 font-mono text-xs">#@t.CampaignId</td>
+                        <td class="px-4 py-3 font-mono text-xs text-slate-300">@t.Phone</td>
+                        <td class="px-4 py-3 text-slate-400 text-xs">@(string.IsNullOrEmpty(t.Address) ? "—" : t.Address)</td>
+                        <td class="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">@t.AddedAt.ToString("MMM d HH:mm")</td>
+                        <td class="px-4 py-3">
+                            <button onclick="removeTarget(@t.Id)"
+                                    class="px-2 py-1 rounded text-xs text-red-400 border border-red-500/20 bg-red-500/5 hover:bg-red-500/15 transition-colors"
+                                    title="Remove target">
+                                <i class="fa-solid fa-trash-can"></i>
+                            </button>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+        }
+    </section>
+
     <!-- Leads table -->
     <section>
         <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest mb-4">
@@ -391,6 +470,18 @@ function updateStatus(leadId, status) {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'leadId=' + leadId + '&status=' + encodeURIComponent(status)
     }).catch(function(e) { console.warn('Status update failed', e); });
+}
+
+function removeTarget(targetId) {
+    if (!confirm('Remove this target?')) return;
+    fetch('/LeadGen/RemoveTarget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'targetId=' + targetId
+    }).then(function() {
+        var row = document.getElementById('target-' + targetId);
+        if (row) row.remove();
+    }).catch(function(e) { console.warn('Remove target failed', e); });
 }
 
 function suppressPhone(phone, leadId) {

@@ -55,9 +55,14 @@ namespace RoofingLeadGeneration.Controllers
 
             var suppressed = await _db.LeadGenSuppressed.CountAsync();
 
-            ViewBag.Campaigns       = campaigns;
-            ViewBag.Leads           = leads;
-            ViewBag.Suppressed      = suppressed;
+            var targets = await _db.LeadGenTargets
+                .OrderBy(t => t.CampaignId).ThenBy(t => t.AddedAt)
+                .ToListAsync();
+
+            ViewBag.Campaigns        = campaigns;
+            ViewBag.Leads            = leads;
+            ViewBag.Suppressed       = suppressed;
+            ViewBag.Targets          = targets;
             ViewBag.GoogleMapsApiKey = _config["GoogleMaps:ApiKey"] ?? "";
             return View();
         }
@@ -167,6 +172,52 @@ namespace RoofingLeadGeneration.Controllers
             if (!IsAdmin()) return Unauthorized();
             await _leadGen.SuppressPhoneAsync(phone, "manual", null);
             return Ok(new { suppressed = true });
+        }
+
+        // ── POST /LeadGen/AddTarget ──────────────────────────────────────
+        [HttpPost("AddTarget")]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> AddTarget(long campaignId, string phone, string? address)
+        {
+            if (!IsAdmin()) return Redirect("/");
+
+            var campaign = await _db.LeadGenCampaigns.FindAsync(campaignId);
+            if (campaign == null) { TempData["Error"] = "Campaign not found."; return RedirectToAction("Index"); }
+            if (campaign.Status != "draft") { TempData["Error"] = "Can only add targets to draft campaigns."; return RedirectToAction("Index"); }
+
+            var normalized = LeadGenService.NormalizePhone(phone);
+            if (string.IsNullOrWhiteSpace(normalized)) { TempData["Error"] = "Invalid phone number."; return RedirectToAction("Index"); }
+
+            var exists = await _db.LeadGenTargets
+                .AnyAsync(t => t.CampaignId == campaignId && t.Phone == normalized);
+            if (!exists)
+            {
+                _db.LeadGenTargets.Add(new Data.Models.LeadGenTarget
+                {
+                    CampaignId = campaignId,
+                    Phone      = normalized,
+                    Address    = address ?? "",
+                    AddedAt    = DateTime.UtcNow
+                });
+                await _db.SaveChangesAsync();
+            }
+
+            TempData["Success"] = $"Target {normalized} added to campaign #{campaignId}.";
+            return RedirectToAction("Index");
+        }
+
+        // ── POST /LeadGen/RemoveTarget ───────────────────────────────────
+        [HttpPost("RemoveTarget")]
+        public async Task<IActionResult> RemoveTarget(long targetId)
+        {
+            if (!IsAdmin()) return Unauthorized();
+
+            var target = await _db.LeadGenTargets.FindAsync(targetId);
+            if (target == null) return NotFound();
+
+            _db.LeadGenTargets.Remove(target);
+            await _db.SaveChangesAsync();
+            return Ok(new { removed = true });
         }
 
         // ── POST /LeadGen/Webhook ────────────────────────────────────────
