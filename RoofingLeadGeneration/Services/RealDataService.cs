@@ -1269,7 +1269,9 @@ out center;";
         public async Task<string> GetMrmsHailSwathGeoJsonAsync(
             double minLat, double maxLat, double minLng, double maxLng, int lookbackDays)
         {
-            // LSR-based swath generation: cluster same-day hail reports into buffered polygons.
+            // LSR-based swath generation: cluster same-day hail reports into size-banded
+            // convex-hull polygons.  Each size band gets its own polygon per cluster so the
+            // frontend can render concentric rings (large outer = pea hail, small inner = golf ball+).
             try
             {
                 double centerLat = (minLat + maxLat) / 2;
@@ -1299,44 +1301,59 @@ out center;";
                 if (inBox.Count == 0)
                     return EmptyFeatureCollection;
 
+                // Size bands rendered smallest→largest so larger hail polygons sit on top.
+                // Each band includes all points >= that threshold.
+                double[] sizeBands = new double[] { 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0 };
+
                 using var ms     = new System.IO.MemoryStream();
                 using var writer = new System.Text.Json.Utf8JsonWriter(ms);
                 writer.WriteStartObject();
                 writer.WriteString("type", "FeatureCollection");
                 writer.WriteStartArray("features");
 
+                // Outer band first (largest area, lowest z), inner bands on top.
                 foreach (var dayGrp in inBox.GroupBy(e => e.Date.Date).OrderByDescending(g => g.Key))
                 {
-                    foreach (var cluster in ClusterHailPoints(dayGrp.ToList(), 20.0))
+                    var dayPoints = dayGrp.ToList();
+
+                    // Emit bands from smallest threshold to largest (outer → inner).
+                    foreach (var band in sizeBands)
                     {
-                        var ring = BuildSwathRing(cluster);
-                        if (ring == null) continue;
+                        var bandPoints = dayPoints.Where(p => p.SizeInches >= band).ToList();
+                        if (bandPoints.Count == 0) continue;
 
-                        writer.WriteStartObject();
-                        writer.WriteString("type", "Feature");
-
-                        writer.WriteStartObject("geometry");
-                        writer.WriteString("type", "Polygon");
-                        writer.WriteStartArray("coordinates");
-                        writer.WriteStartArray();
-                        foreach (var (rLat, rLng) in ring)
+                        foreach (var cluster in ClusterHailPoints(bandPoints, 20.0))
                         {
+                            var ring = BuildConvexHullRing(cluster);
+                            if (ring == null) continue;
+
+                            writer.WriteStartObject();
+                            writer.WriteString("type", "Feature");
+
+                            writer.WriteStartObject("geometry");
+                            writer.WriteString("type", "Polygon");
+                            writer.WriteStartArray("coordinates");
                             writer.WriteStartArray();
-                            writer.WriteNumberValue(Math.Round(rLng, 5));
-                            writer.WriteNumberValue(Math.Round(rLat, 5));
+                            foreach (var (rLat, rLng) in ring)
+                            {
+                                writer.WriteStartArray();
+                                writer.WriteNumberValue(Math.Round(rLng, 5));
+                                writer.WriteNumberValue(Math.Round(rLat, 5));
+                                writer.WriteEndArray();
+                            }
                             writer.WriteEndArray();
+                            writer.WriteEndArray();
+                            writer.WriteEndObject(); // geometry
+
+                            writer.WriteStartObject("properties");
+                            writer.WriteNumber("sizeBand",   band);
+                            writer.WriteNumber("maxHailIn",  Math.Round(cluster.Max(p => p.SizeInches), 2));
+                            writer.WriteString("date",       dayGrp.Key.ToString("yyyy-MM-dd"));
+                            writer.WriteNumber("reportCount", cluster.Count);
+                            writer.WriteEndObject(); // properties
+
+                            writer.WriteEndObject(); // feature
                         }
-                        writer.WriteEndArray();
-                        writer.WriteEndArray();
-                        writer.WriteEndObject(); // geometry
-
-                        writer.WriteStartObject("properties");
-                        writer.WriteNumber("maxHailIn",  Math.Round(cluster.Max(p => p.SizeInches), 2));
-                        writer.WriteString("date",        dayGrp.Key.ToString("yyyy-MM-dd"));
-                        writer.WriteNumber("reportCount", cluster.Count);
-                        writer.WriteEndObject(); // properties
-
-                        writer.WriteEndObject(); // feature
                     }
                 }
 
@@ -1377,38 +1394,117 @@ out center;";
         }
 
         /// <summary>
-        /// Build a closed GeoJSON ring for a cluster of hail reports.
-        /// Single point → 12-gon approximation.  Multiple points → buffered bounding box.
-        /// Buffer ≈ 8 miles so thin corridors still show as a visible polygon.
+        /// Build a closed GeoJSON ring for a cluster using convex hull + outward buffer.
+        /// 1 point  → 16-gon circle (~5 mi radius).
+        /// 2 points → capsule approximation (16-gon around each endpoint, merged).
+        /// 3+ pts   → Andrew's monotone-chain convex hull, then each vertex pushed
+        ///            outward from the centroid by BufDeg (~5 miles).
         /// </summary>
-        private static List<(double lat, double lng)>? BuildSwathRing(List<HailEvent> cluster)
+        private static List<(double lat, double lng)>? BuildConvexHullRing(List<HailEvent> cluster)
         {
             if (cluster.Count == 0) return null;
-            const double BufDeg = 0.12;   // ~8 miles in latitude
+            const double BufDeg = 0.07;   // ~5 miles outward buffer
+            const int    CirclePts = 16;
 
             if (cluster.Count == 1)
             {
+                // Single point → circle
                 var cLat = cluster[0].Lat;
                 var cLng = cluster[0].Lng;
-                var ring = new List<(double, double)>();
-                for (int i = 0; i <= 12; i++)
+                var ring = new List<(double lat, double lng)>();
+                for (int i = 0; i <= CirclePts; i++)
                 {
-                    double a = 2 * Math.PI * i / 12;
-                    ring.Add((cLat + BufDeg * Math.Sin(a), cLng + BufDeg * Math.Cos(a)));
+                    double a = 2 * Math.PI * i / CirclePts;
+                    ring.Add((lat: cLat + BufDeg * Math.Sin(a), lng: cLng + BufDeg * Math.Cos(a)));
                 }
                 return ring;
             }
 
-            double lo = cluster.Min(p => p.Lat) - BufDeg;
-            double hi = cluster.Max(p => p.Lat) + BufDeg;
-            double lf = cluster.Min(p => p.Lng) - BufDeg;
-            double rt = cluster.Max(p => p.Lng) + BufDeg;
-
-            return new List<(double lat, double lng)>
+            if (cluster.Count == 2)
             {
-                (lo, lf), (lo, rt), (hi, rt), (hi, lf), (lo, lf)   // closed ring
-            };
+                // Two points → stadium shape: circles at each end merged into a closed ring
+                var pts = new List<(double lat, double lng)>();
+                foreach (var p in cluster)
+                {
+                    for (int i = 0; i < CirclePts; i++)
+                    {
+                        double a = 2 * Math.PI * i / CirclePts;
+                        pts.Add((lat: p.Lat + BufDeg * Math.Sin(a), lng: p.Lng + BufDeg * Math.Cos(a)));
+                    }
+                }
+                // Fall through to convex hull on the expanded point cloud
+                var hull2 = ConvexHull(pts);
+                if (hull2.Count < 3) return null;
+                hull2.Add(hull2[0]); // close ring
+                return hull2;
+            }
+
+            // 3+ points: compute convex hull then buffer each vertex outward
+            var rawPts = cluster.Select(p => (lat: p.Lat, lng: p.Lng)).ToList();
+            var hull   = ConvexHull(rawPts);
+            if (hull.Count < 3) return null;
+
+            // Centroid of hull
+            double cntLat = hull.Average(p => p.lat);
+            double cntLng = hull.Average(p => p.lng);
+
+            // Push each hull vertex outward from centroid
+            var buffered = hull.Select(p =>
+            {
+                double dLat = p.lat - cntLat;
+                double dLng = p.lng - cntLng;
+                double len  = Math.Sqrt(dLat * dLat + dLng * dLng);
+                if (len < 1e-9) return (lat: p.lat + BufDeg, lng: p.lng + BufDeg);
+                double scale = (len + BufDeg) / len;
+                return (lat: cntLat + dLat * scale, lng: cntLng + dLng * scale);
+            }).ToList();
+
+            buffered.Add(buffered[0]); // close the ring
+            return buffered;
         }
+
+        /// <summary>
+        /// Andrew's monotone-chain convex hull.  Returns vertices in CCW order (open — caller closes).
+        /// Input: list of (lat, lng) as (y, x).
+        /// </summary>
+        private static List<(double lat, double lng)> ConvexHull(List<(double lat, double lng)> points)
+        {
+            int n = points.Count;
+            if (n < 3) return new List<(double lat, double lng)>(points);
+
+            // Sort by x (lng) then y (lat)
+            var sorted = points.OrderBy(p => p.lng).ThenBy(p => p.lat).ToList();
+
+            var hull = new List<(double lat, double lng)>(2 * n);
+
+            // Lower hull
+            foreach (var p in sorted)
+            {
+                while (hull.Count >= 2 && Cross(hull[^2], hull[^1], p) <= 0)
+                    hull.RemoveAt(hull.Count - 1);
+                hull.Add(p);
+            }
+
+            // Upper hull
+            int lower = hull.Count + 1;
+            for (int i = n - 2; i >= 0; i--)
+            {
+                var p = sorted[i];
+                while (hull.Count >= lower && Cross(hull[^2], hull[^1], p) <= 0)
+                    hull.RemoveAt(hull.Count - 1);
+                hull.Add(p);
+            }
+
+            hull.RemoveAt(hull.Count - 1); // last point == first
+            return hull;
+        }
+
+        /// <summary>Cross product of vectors OA and OB (positive = left turn).</summary>
+        private static double Cross(
+            (double lat, double lng) O,
+            (double lat, double lng) A,
+            (double lat, double lng) B)
+            => (A.lng - O.lng) * (B.lat - O.lat) - (A.lat - O.lat) * (B.lng - O.lng);
 
         // ─────────────────────────────────────────────────────────────────
         // Hail Reports GeoJSON  –  individual LSR + SPC events as Point features

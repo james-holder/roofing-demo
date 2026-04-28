@@ -869,6 +869,26 @@ namespace RoofingLeadGeneration.Controllers
         }
 
         // ─────────────────────────────────────────────────────────────────
+        // GET /RoofHealth/HailSwathPolygons
+        //   Returns size-banded convex-hull swath polygons as GeoJSON for the
+        //   given bounding box and lookback window.
+        //   Used by the "Hail Swaths" overlay toggle in Storm Explorer.
+        // ─────────────────────────────────────────────────────────────────
+        [HttpGet("HailSwathPolygons")]
+        public async Task<IActionResult> HailSwathPolygons(
+            double minLat = 0, double maxLat = 0,
+            double minLng = 0, double maxLng = 0,
+            int    lookbackDays = 90)
+        {
+            if (minLat == 0 && maxLat == 0)
+                return Content("{\"type\":\"FeatureCollection\",\"features\":[]}", "application/json");
+
+            var geojson = await _realData.GetMrmsHailSwathGeoJsonAsync(
+                minLat, maxLat, minLng, maxLng, lookbackDays);
+
+            return Content(geojson, "application/json");
+        }
+
         // GET /RoofHealth/HailSwath
         //   Returns individual LSR + SPC hail event reports as GeoJSON Points
         //   for the given bounding box and lookback window.

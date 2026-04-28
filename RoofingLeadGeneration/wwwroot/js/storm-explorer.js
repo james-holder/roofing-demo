@@ -22,6 +22,11 @@
     let hailReportsVisible = false;
     let hailLegendControl  = null;    // L.control floating legend
 
+    // Hail Swath Polygons overlay state
+    let swathLayer   = null;          // Leaflet GeoJSON layer — size-banded convex hull polygons
+    let swathVisible = false;
+    let swathLegend  = null;          // L.control floating legend for swaths
+
     // ── Public API ──────────────────────────────────────────────────────
 
     /**
@@ -72,6 +77,148 @@
             if (hailLegendControl) { hailLegendControl.remove(); hailLegendControl = null; }
         }
     };
+
+    /**
+     * Toggle the Hail Swath Polygon overlay on/off.
+     * Shows size-banded convex-hull polygons — one ring per hail size tier per storm cluster.
+     * Outer ring = pea hail (≥0.75"), inner rings progressively smaller and more intense coloured.
+     */
+    window.toggleHailSwaths = function () {
+        if (!seMap) return;
+        swathVisible = !swathVisible;
+
+        var btn = document.getElementById('swathToggleBtn');
+        if (btn) {
+            btn.classList.toggle('border-orange-500',   swathVisible);
+            btn.classList.toggle('text-orange-300',     swathVisible);
+            btn.classList.toggle('bg-orange-500/10',    swathVisible);
+            btn.classList.toggle('border-slate-600',    !swathVisible);
+            btn.classList.toggle('text-slate-400',      !swathVisible);
+            btn.classList.toggle('bg-slate-900',        !swathVisible);
+        }
+
+        if (swathVisible) {
+            loadSwathLayer();
+            addSwathLegend();
+        } else {
+            if (swathLayer)  { seMap.removeLayer(swathLayer);  swathLayer  = null; }
+            if (swathLegend) { swathLegend.remove();           swathLegend = null; }
+        }
+    };
+
+    /** Map a sizeBand threshold to a stroke/fill colour (red centre → yellow outer). */
+    function swathColor(sizeBand) {
+        if (sizeBand >= 3.0)  return '#7c3aed'; // purple  — grapefruit
+        if (sizeBand >= 2.5)  return '#dc2626'; // dark red — baseball
+        if (sizeBand >= 2.0)  return '#ef4444'; // red      — golf ball
+        if (sizeBand >= 1.75) return '#f97316'; // red-orange
+        if (sizeBand >= 1.5)  return '#fb923c'; // orange   — ping pong
+        if (sizeBand >= 1.25) return '#f59e0b'; // amber    — half dollar
+        if (sizeBand >= 1.0)  return '#eab308'; // yellow   — quarter
+        return '#84cc16';                        // yellow-green — penny
+    }
+
+    /** Fetch banded swath polygons for the current viewport and render as filled polygons. */
+    function loadSwathLayer() {
+        if (!seMap) return;
+        var bounds   = seMap.getBounds();
+        var lookback = parseInt(document.getElementById('seLookback')?.value || '90', 10);
+
+        fetch('/RoofHealth/HailSwathPolygons?' + new URLSearchParams({
+            minLat:       bounds.getSouth().toFixed(4),
+            maxLat:       bounds.getNorth().toFixed(4),
+            minLng:       bounds.getWest().toFixed(4),
+            maxLng:       bounds.getEast().toFixed(4),
+            lookbackDays: lookback
+        }))
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (geojson) {
+            if (!geojson || !seMap || !swathVisible) return;
+
+            if (swathLayer) seMap.removeLayer(swathLayer);
+
+            swathLayer = L.geoJSON(geojson, {
+                style: function (feature) {
+                    var band  = (feature.properties && feature.properties.sizeBand) || 0.75;
+                    var color = swathColor(band);
+                    return {
+                        color:       color,
+                        weight:      1.5,
+                        opacity:     0.75,
+                        fillColor:   color,
+                        fillOpacity: band >= 2.0 ? 0.28 : 0.18
+                    };
+                },
+                onEachFeature: function (feature, layer) {
+                    var p    = feature.properties || {};
+                    var band = p.sizeBand || 0;
+                    var coinLabel = band >= 3.0  ? 'Grapefruit+'
+                                 : band >= 2.5  ? 'Baseball'
+                                 : band >= 2.0  ? 'Golf Ball'
+                                 : band >= 1.75 ? 'Ping Pong'
+                                 : band >= 1.5  ? 'Walnut'
+                                 : band >= 1.25 ? 'Half Dollar'
+                                 : band >= 1.0  ? 'Quarter'
+                                 : 'Penny';
+                    layer.bindTooltip(
+                        '<b>' + band.toFixed(2) + '&quot;+ hail swath</b> &mdash; ' + coinLabel + '<br>' +
+                        (p.date || '') + '<br>' +
+                        '<span style="opacity:0.7;font-size:0.85em">' + (p.reportCount || 0) + ' ground reports · max ' + (p.maxHailIn ? p.maxHailIn.toFixed(2) + '"' : '—') + '</span>',
+                        { sticky: true }
+                    );
+                }
+            }).addTo(seMap);
+
+            console.info('[Hail Swaths] Rendered ' + (geojson.features ? geojson.features.length : 0) + ' banded polygons.');
+        })
+        .catch(function (err) { console.warn('[Hail Swaths]', err); });
+    }
+
+    /** Floating legend for swath bands. */
+    function addSwathLegend() {
+        if (!seMap || swathLegend) return;
+
+        swathLegend = L.control({ position: 'bottomleft' });
+        swathLegend.onAdd = function () {
+            var div = L.DomUtil.create('div');
+            div.style.cssText = [
+                'background:rgba(15,20,30,0.88)',
+                'border:1px solid rgba(100,116,139,0.45)',
+                'border-radius:10px',
+                'padding:10px 13px',
+                'font-family:inherit',
+                'font-size:12px',
+                'line-height:1.6',
+                'color:#cbd5e1',
+                'min-width:170px',
+                'box-shadow:0 2px 12px rgba(0,0,0,0.5)',
+                'pointer-events:none'
+            ].join(';');
+
+            var rows = [
+                ['#7c3aed', '≥ 3.0"', 'Grapefruit+'],
+                ['#dc2626', '≥ 2.5"', 'Baseball'],
+                ['#ef4444', '≥ 2.0"', 'Golf Ball'],
+                ['#fb923c', '≥ 1.5"', 'Ping Pong'],
+                ['#eab308', '≥ 1.0"', 'Quarter'],
+                ['#84cc16', '≥ 0.75"','Penny'],
+            ];
+
+            div.innerHTML =
+                '<div style="font-weight:700;font-size:11px;letter-spacing:.06em;' +
+                    'text-transform:uppercase;color:#94a3b8;margin-bottom:7px">Hail Swath Size</div>' +
+                rows.map(function (r) {
+                    return '<div style="display:flex;align-items:center;gap:7px;margin-bottom:3px">' +
+                        '<span style="display:inline-block;width:13px;height:13px;border-radius:3px;' +
+                            'background:' + r[0] + ';opacity:0.85;flex-shrink:0"></span>' +
+                        '<span>' + r[1] + ' <span style="opacity:0.6">(' + r[2] + ')</span></span>' +
+                        '</div>';
+                }).join('');
+
+            return div;
+        };
+        swathLegend.addTo(seMap);
+    }
 
     /** Fetch individual LSR/SPC hail events for the current viewport and render as dots. */
     function loadHailReportsLayer() {
@@ -325,7 +472,7 @@
             tierIcon  = 'text-slate-400';
         }
 
-        var hailStr    = s.maxHailInches ? s.maxHailInches.toFixed(2) + '"' : '\u2014';
+        var hailStr    = s.maxHailInches ? s.maxHailInches.toFixed(2) + '"' : '—';
         var windStr    = s.maxWindMph > 0 ? s.maxWindMph.toFixed(0) + ' mph' : '';
         var dayStr     = seFormatDate(s.date);
         var scoreWidth = Math.min(Math.round(s.score), 100);
@@ -394,7 +541,7 @@
             });
 
             circle.bindTooltip(
-                '<b>' + (s.maxHailInches ? s.maxHailInches.toFixed(2) + '"' : '\u2014') + ' hail</b>' +
+                '<b>' + (s.maxHailInches ? s.maxHailInches.toFixed(2) + '"' : '—') + ' hail</b>' +
                 (s.maxWindMph > 0 ? ' &nbsp;&middot;&nbsp; ' + s.maxWindMph.toFixed(0) + ' mph wind' : '') +
                 '<br>' + seFormatDate(s.date) +
                 '<br>Score: ' + Math.round(s.score),
@@ -420,7 +567,7 @@
     }
 
     function seFormatDate(ds) {
-        if (!ds) return '\u2014';
+        if (!ds) return '—';
         try {
             var d = new Date(ds + 'T12:00:00Z');
             return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });

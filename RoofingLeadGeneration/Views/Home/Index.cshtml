@@ -430,6 +430,16 @@
             <span class="text-xs text-slate-300">Wind Events</span>
         </label>
 
+        @if (ViewBag.HailSwathPolygons == true) {
+        <!-- Hail Swath Polygons overlay toggle -->
+        <button id="swathToggleBtn" onclick="toggleHailSwaths()"
+            class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-600 bg-slate-900
+                   text-xs text-slate-400 hover:text-white hover:border-orange-500/60 transition-colors">
+            <i class="fa-solid fa-draw-polygon text-orange-400/70 text-xs"></i>
+            Hail Swaths
+        </button>
+        }
+
         <!-- Hail Reports overlay toggle -->
         <button id="mrmsToggleBtn" onclick="toggleHailReports()"
             class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-600 bg-slate-900

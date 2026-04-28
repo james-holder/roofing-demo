@@ -102,6 +102,7 @@ builder.Services.AddSingleton<RealDataService>();
 builder.Services.AddSingleton<EmailService>();
 builder.Services.AddSingleton<HailReportService>();
 builder.Services.AddHostedService<StormAlertService>();
+builder.Services.AddScoped<LeadGenService>();
 
 // ── Pipeline ──────────────────────────────────────────────────────────────
 var app = builder.Build();
@@ -349,6 +350,102 @@ using (var scope = app.Services.CreateScope())
         cmd.CommandText = "CREATE INDEX ix_org_credit_tx_user_id    ON org_credit_transactions(user_id)";
         cmd.ExecuteNonQuery();
         cmd.CommandText = "CREATE INDEX ix_org_credit_tx_created_at ON org_credit_transactions(created_at)";
+        cmd.ExecuteNonQuery();
+    }
+
+    // ── LeadGen tables ───────────────────────────────────────────────
+    if (!TableExists("leadgen_campaigns"))
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE leadgen_campaigns (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                state_abbr       TEXT    NOT NULL,
+                storm_date       TEXT    NOT NULL,
+                hail_size_inches REAL    NOT NULL DEFAULT 0,
+                center_lat       REAL    NOT NULL DEFAULT 0,
+                center_lng       REAL    NOT NULL DEFAULT 0,
+                radius_miles     REAL    NOT NULL DEFAULT 0,
+                status           TEXT    NOT NULL DEFAULT 'draft',
+                total_sent       INTEGER NOT NULL DEFAULT 0,
+                total_responded  INTEGER NOT NULL DEFAULT 0,
+                created_at       TEXT    NOT NULL DEFAULT (datetime('now')),
+                sent_at          TEXT,
+                notes            TEXT    NOT NULL DEFAULT ''
+            )
+        """;
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE INDEX ix_leadgen_campaigns_state  ON leadgen_campaigns(state_abbr)";
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE INDEX ix_leadgen_campaigns_date   ON leadgen_campaigns(storm_date)";
+        cmd.ExecuteNonQuery();
+    }
+
+    if (!TableExists("leadgen_leads"))
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE leadgen_leads (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id      INTEGER NOT NULL REFERENCES leadgen_campaigns(id) ON DELETE CASCADE,
+                homeowner_phone  TEXT    NOT NULL,
+                homeowner_name   TEXT    NOT NULL DEFAULT '',
+                address          TEXT    NOT NULL DEFAULT '',
+                lat              REAL    NOT NULL DEFAULT 0,
+                lng              REAL    NOT NULL DEFAULT 0,
+                hail_size_inches REAL    NOT NULL DEFAULT 0,
+                storm_date       TEXT    NOT NULL DEFAULT '',
+                response_text    TEXT    NOT NULL DEFAULT '',
+                responded_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+                status           TEXT    NOT NULL DEFAULT 'new',
+                created_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+        """;
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE UNIQUE INDEX ix_leadgen_leads_campaign_phone ON leadgen_leads(campaign_id, homeowner_phone)";
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE INDEX ix_leadgen_leads_status ON leadgen_leads(status)";
+        cmd.ExecuteNonQuery();
+    }
+
+    if (!TableExists("leadgen_suppressed"))
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE leadgen_suppressed (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone         TEXT    NOT NULL,
+                reason        TEXT    NOT NULL,
+                campaign_id   INTEGER REFERENCES leadgen_campaigns(id) ON DELETE SET NULL,
+                suppressed_at TEXT    NOT NULL DEFAULT (datetime('now'))
+            )
+        """;
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE UNIQUE INDEX ix_leadgen_suppressed_phone ON leadgen_suppressed(phone)";
+        cmd.ExecuteNonQuery();
+    }
+
+    if (!TableExists("leadgen_contact_history"))
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE leadgen_contact_history (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                phone        TEXT    NOT NULL,
+                campaign_id  INTEGER NOT NULL REFERENCES leadgen_campaigns(id) ON DELETE CASCADE,
+                sent_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+                dnc_checked  INTEGER NOT NULL DEFAULT 0,
+                dnc_clean    INTEGER NOT NULL DEFAULT 0,
+                responded    INTEGER NOT NULL DEFAULT 0,
+                response_text TEXT,
+                responded_at TEXT,
+                lead_id      INTEGER REFERENCES leadgen_leads(id) ON DELETE SET NULL
+            )
+        """;
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE UNIQUE INDEX ix_leadgen_contact_history_campaign_phone ON leadgen_contact_history(campaign_id, phone)";
+        cmd.ExecuteNonQuery();
+        cmd.CommandText = "CREATE INDEX ix_leadgen_contact_history_phone ON leadgen_contact_history(phone)";
         cmd.ExecuteNonQuery();
     }
 
