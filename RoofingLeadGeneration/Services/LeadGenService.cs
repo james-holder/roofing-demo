@@ -50,7 +50,7 @@ namespace RoofingLeadGeneration.Services
         /// Fires the SMS blast for a campaign.
         /// Returns (sent, skipped) counts.
         /// </summary>
-        public async Task<(int Sent, int Skipped)> FireBlastAsync(long campaignId)
+        public async Task<(int Sent, int Skipped, string Detail)> FireBlastAsync(long campaignId)
         {
             var campaign = await _db.LeadGenCampaigns.FindAsync(campaignId);
             if (campaign == null) throw new InvalidOperationException("Campaign not found.");
@@ -96,72 +96,57 @@ namespace RoofingLeadGeneration.Services
 
             int sent    = 0;
             int skipped = 0;
+            var detail  = new System.Text.StringBuilder();
 
-            // TODO Phase 1.5: Replace stub numbers with real skip-traced parcels
-            // from the campaign's storm swath (BST/Whitepages bulk lookup).
-            // For now, the blast fires against numbers explicitly added to the campaign
-            // via the internal dashboard — keeps Phase 1 manual and controlled.
             var targets = await GetCampaignTargetsAsync(campaignId);
+            detail.AppendLine($"targets={targets.Count} suppressed={suppressed.Count} cooldown={recentlyContacted.Count} sentThisCampaign={sentThisCampaign.Count}");
 
             var message = BuildSmsMessage(campaign);
 
             foreach (var target in targets)
             {
                 var phone = NormalizePhone(target.Phone);
-                if (string.IsNullOrWhiteSpace(phone)) { skipped++; continue; }
-                if (suppressed.Contains(phone))        { skipped++; continue; }
-                if (sentThisCampaign.Contains(phone))  { skipped++; continue; }
+                if (string.IsNullOrWhiteSpace(phone)) { detail.AppendLine($"{target.Phone} → SKIP:empty"); skipped++; continue; }
+                if (suppressed.Contains(phone))        { detail.AppendLine($"{phone} → SKIP:suppressed"); skipped++; continue; }
+                if (sentThisCampaign.Contains(phone))  { detail.AppendLine($"{phone} → SKIP:sentThisCampaign"); skipped++; continue; }
+                if (recentlyContacted.Contains(phone)) { detail.AppendLine($"{phone} → SKIP:cooldown"); skipped++; continue; }
 
-                if (recentlyContacted.Contains(phone))
-                {
-                    _logger.LogInformation("LeadGen skip {Phone} — contacted within {Days}d cooldown.", phone, ReBlastCooldownDays);
-                    skipped++;
-                    continue;
-                }
-
-                // Quiet hours: 8am–9pm Central Time (TX/OK)
                 if (!IsWithinQuietHours(DateTime.UtcNow))
                 {
+                    detail.AppendLine($"{phone} → BREAK:quietHours");
                     _logger.LogWarning("LeadGen blast paused — outside quiet hours (8am–9pm CT).");
                     break;
                 }
 
-                // DNC.com scrub (skips if no API key configured)
                 var (dncChecked, dncClean) = await CheckDncAsync(phone, campaignId);
-                if (dncChecked && !dncClean)
-                {
-                    // Already suppressed inside CheckDncAsync; just skip
-                    skipped++;
-                    continue;
-                }
+                if (dncChecked && !dncClean) { detail.AppendLine($"{phone} → SKIP:dnc"); skipped++; continue; }
 
-                var ok = await SendSmsAsync(accountSid, authToken, fromNumber, phone, message);
-
-                // Record contact history regardless of send success/failure
-                // (so we don't retry failed numbers without human review)
-                var history = new LeadGenContactHistory
-                {
-                    Phone       = phone,
-                    CampaignId  = campaignId,
-                    SentAt      = DateTime.UtcNow,
-                    DncChecked  = dncChecked,
-                    DncClean    = dncClean
-                };
-                _db.LeadGenContactHistory.Add(history);
-                await _db.SaveChangesAsync();
+                var (ok, smsError) = await SendSmsAsync(accountSid, authToken, fromNumber, phone, message);
 
                 if (ok)
                 {
+                    var history = new LeadGenContactHistory
+                    {
+                        Phone      = phone,
+                        CampaignId = campaignId,
+                        SentAt     = DateTime.UtcNow,
+                        DncChecked = dncChecked,
+                        DncClean   = dncClean
+                    };
+                    _db.LeadGenContactHistory.Add(history);
+                    await _db.SaveChangesAsync();
+
                     sent++;
                     sentThisCampaign.Add(phone);
                     recentlyContacted.Add(phone);
+                    detail.AppendLine($"{phone} → SENT");
                 }
                 else
                 {
+                    detail.AppendLine($"{phone} → SKIP:twilioFailed({smsError})");
                     skipped++;
                 }
 
-                // Small delay to avoid Twilio rate limits (~1 msg/sec on trial accounts)
                 await Task.Delay(1100);
             }
 
@@ -172,7 +157,7 @@ namespace RoofingLeadGeneration.Services
             _logger.LogInformation("LeadGen blast complete: campaignId={Id} sent={Sent} skipped={Skipped}",
                 campaignId, sent, skipped);
 
-            return (sent, skipped);
+            return (sent, skipped, detail.ToString());
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -391,7 +376,7 @@ namespace RoofingLeadGeneration.Services
                    $"Reply YES for a free roof inspection. Reply STOP to opt out.";
         }
 
-        private async Task<bool> SendSmsAsync(
+        private async Task<(bool Ok, string Error)> SendSmsAsync(
             string accountSid, string authToken,
             string from, string to, string body)
         {
@@ -416,14 +401,14 @@ namespace RoofingLeadGeneration.Services
                     var err = await resp.Content.ReadAsStringAsync();
                     _logger.LogWarning("Twilio SMS failed to={To} status={Status} body={Body}",
                         to, resp.StatusCode, err.Length > 200 ? err[..200] : err);
-                    return false;
+                    return (false, $"HTTP {(int)resp.StatusCode}: {(err.Length > 120 ? err[..120] : err)}");
                 }
-                return true;
+                return (true, "");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Twilio SMS exception to={To}", to);
-                return false;
+                return (false, ex.Message);
             }
         }
 

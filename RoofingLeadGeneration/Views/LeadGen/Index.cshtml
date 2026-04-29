@@ -49,6 +49,13 @@
         </div>
         <div class="flex items-center gap-4 text-xs text-slate-400">
             <span><i class="fa-solid fa-ban mr-1 text-red-400"></i>@suppressed suppressed</span>
+            <form method="post" action="/LeadGen/ClearContactHistory" class="inline"
+                  onsubmit="return confirm('Clear ALL contact history? This resets all 30-day cooldowns.')">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="text-slate-500 hover:text-yellow-400 transition-colors" title="Clear all contact history (dev)">
+                    <i class="fa-solid fa-clock-rotate-left"></i> clear cooldowns
+                </button>
+            </form>
             <a href="/Admin" class="hover:text-white transition-colors">Admin</a>
             <a href="/" class="hover:text-white transition-colors">StormLead</a>
         </div>
@@ -232,6 +239,16 @@
                                         class="px-2 py-1 rounded text-xs text-slate-300 border border-slate-600 bg-slate-700/50 hover:bg-slate-600 transition-colors">
                                     <i class="fa-solid fa-pencil"></i>
                                 </button>
+                                <form method="post" action="/LeadGen/ResetCampaign" class="inline"
+                                      onsubmit="return confirm('Reset campaign #@c.Id to draft and clear contact history?')">
+                                    @Html.AntiForgeryToken()
+                                    <input type="hidden" name="campaignId" value="@c.Id" />
+                                    <button type="submit"
+                                            class="px-2 py-1 rounded text-xs text-yellow-400 border border-yellow-500/20 bg-yellow-500/5 hover:bg-yellow-500/15 transition-colors"
+                                            title="Reset to draft / clear contact history">
+                                        <i class="fa-solid fa-rotate-left"></i>
+                                    </button>
+                                </form>
                             </div>
                         </td>
                     </tr>
